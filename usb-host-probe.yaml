@@ -60,6 +60,7 @@ external_components:
 aw9523b_regs:
   update_interval: 3s
 
+
 binary_sensor:
   - platform: axp2101_vbus
     name: "VBUS Present"

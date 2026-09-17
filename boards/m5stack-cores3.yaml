@@ -140,6 +140,13 @@ switch:
     internal: true
     restore_mode: ALWAYS_OFF
   - platform: gpio
+    id: bus_out_en
+    pin:
+      aw9523b_id: expander
+      number: 1 # P0_1, BUS_OUT_EN
+    internal: true
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
     id: usb_otg_en
     pin:
       aw9523b_id: expander
@@ -151,13 +158,20 @@ switch:
     name: "USB Host 5V"
     optimistic: true
     restore_mode: ALWAYS_OFF
-    # Boost before switch on, switch off before boost: a half-applied sequence
-    # never reports the output live while the converter is stopped.
+    # BUS_OUT_EN low ties the boost output to the BUS input path, so VBUS never
+    # rises from USB_OTG_EN alone -- measured 0V with only boost+OTG set, 5.007V
+    # once BUS_OUT_EN joined them. M5Unified's setUsbOutput omits it because its
+    # board init raises BUS_OUT_EN separately.
+    #
+    # Boost before switches on, switches off before boost: a half-applied
+    # sequence never reports the output live while the converter is stopped.
     turn_on_action:
       - switch.turn_on: vbus_boost_en
       - delay: 10ms
+      - switch.turn_on: bus_out_en
       - switch.turn_on: usb_otg_en
     turn_off_action:
       - switch.turn_off: usb_otg_en
+      - switch.turn_off: bus_out_en
       - delay: 10ms
       - switch.turn_off: vbus_boost_en
