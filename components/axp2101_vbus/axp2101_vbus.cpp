@@ -36,6 +36,11 @@ static const uint8_t CORE_S3_PMU_INIT[][2] = {
 };
 
 void AXP2101Vbus::setup() {
+  // Skipped where the axp2101 component already owns the PMU: two components
+  // writing the same registers is a race, and the status bit needs no setup.
+  if (!this->pmu_init_)
+    return;
+
   for (const auto &entry : CORE_S3_PMU_INIT) {
     if (!this->write_byte(entry[0], entry[1])) {
       ESP_LOGE(TAG, "PMU init write to 0x%02X failed", entry[0]);
@@ -43,6 +48,17 @@ void AXP2101Vbus::setup() {
       return;
     }
   }
+}
+
+bool AXP2101Vbus::vbus_present() {
+  uint8_t status;
+  if (!this->read_byte(REG_STATUS1, &status)) {
+    // Treated as present: the interlock exists to stop the boost fighting an
+    // external supply, and a blind read must not be the reason it goes ahead.
+    ESP_LOGW(TAG, "status read failed, assuming VBUS present");
+    return true;
+  }
+  return (status & STATUS1_VBUS_GOOD) != 0;
 }
 
 optional<uint16_t> AXP2101Vbus::read_adc_mv_(uint8_t reg) {

@@ -148,6 +148,34 @@ supplies on the same net. That produced repeated attach/detach churn that never
 occurs on battery. Pick one: the board powers the UPS, or external 5V powers
 everything and `USB Host 5V` stays off.
 
+`USB Host 5V` now enforces this itself: turning it on while the PMU reports
+incoming VBUS is refused and logged, and the switch reports off. The same
+interlock covers the batteryless case below, where the two are the same wire.
+
+### Batteryless is the permanent configuration
+
+The internal lithium cell is removed: a pouch cell unattended for a decade is a
+fire risk not worth a few hours of ride-through. The board is therefore powered
+entirely from outside, and *where* that power arrives decides whether it can
+source VBUS at all.
+
+- Fed through the USB-C port (PD splitter): it cannot source, because that is
+  the same net it lives on. The UPS must take VBUS from the splitter, and
+  `USB Host 5V` stays off permanently. The interlock enforces it.
+- Fed through the M5Bus 5V pins from a base: the USB-C port is free, the PMU
+  sees no incoming VBUS, and `USB Host 5V` works normally.
+
+Which one a given Y-splitter provides is a property of the cable, not of the
+board. Test it with `USB Host 5V` off: if the UPS enumerates anyway, the cable
+supplies the peripheral leg.
+
+### A flat cell plus a restored boost is a boot loop
+
+Asserting the boost on an empty battery collapses the rail, the board resets,
+and the restored switch asserts it again -- while sourcing VBUS also blocks
+charging, so it never recovers. Observed once. `boost_boot_limit` consecutive
+boots that never reach `boost_settle_time` abandon the restore.
+
 ### The AXP2101 cannot measure VBUS the board sources
 
 Status bit 0x00.5 and the VBUS ADC only see power arriving *from* the port.

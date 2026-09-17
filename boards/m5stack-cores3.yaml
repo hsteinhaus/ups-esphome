@@ -53,6 +53,11 @@ psram:
 external_components:
   - source: github://m5stack/esphome-yaml/components
     components: [axp2101, aw9523b]
+  # Relative to the main config, not to this package.
+  - source:
+      type: local
+      path: components
+    components: [axp2101_vbus]
 
 i2c:
   - id: bsp_bus
@@ -171,6 +176,16 @@ binary_sensor:
     web_server:
       sorting_group_id: group_board
 
+  # Externally supplied 5V on the USB-C port. The PMU cannot see VBUS the board
+  # drives itself, so this reads as the supply from outside and nothing else --
+  # which is exactly what the boost must not fight.
+  - platform: axp2101_vbus
+    id: vbus_external
+    i2c_id: bsp_bus
+    pmu_init: false
+    internal: true
+    update_interval: 10s
+
 # USB-C host power. Turning this on makes the CoreS3 SOURCE 5V on its USB-C
 # port, so the board can no longer be powered through it -- see README.
 switch:
@@ -221,22 +236,36 @@ switch:
     # or a short on the far end.
     turn_on_action:
       - if:
+          # Sourcing into a port that is already fed drives the boost against
+          # another supply. Batteryless, that feed is also the board's own
+          # power, so refusing is the only safe answer.
           condition:
-            lambda: "return !id(boot_settled) && id(boost_boot_attempts) >= $boost_boot_limit;"
+            lambda: "return id(vbus_external)->vbus_present();"
           then:
             - logger.log:
                 level: WARN
-                format: "USB Host 5V restore abandoned after %u boots that never settled"
-                args: ["id(boost_boot_attempts)"]
+                format: "USB Host 5V refused: the port is already supplied from outside"
             - switch.template.publish:
                 id: usb_host_power
                 state: false
           else:
-            - lambda: "if (!id(boot_settled)) id(boost_boot_attempts)++;"
-            - switch.turn_on: vbus_boost_en
-            - delay: 10ms
-            - switch.turn_on: bus_out_en
-            - switch.turn_on: usb_otg_en
+            - if:
+                condition:
+                  lambda: "return !id(boot_settled) && id(boost_boot_attempts) >= $boost_boot_limit;"
+                then:
+                  - logger.log:
+                      level: WARN
+                      format: "USB Host 5V restore abandoned after %u boots that never settled"
+                      args: ["id(boost_boot_attempts)"]
+                  - switch.template.publish:
+                      id: usb_host_power
+                      state: false
+                else:
+                  - lambda: "if (!id(boot_settled)) id(boost_boot_attempts)++;"
+                  - switch.turn_on: vbus_boost_en
+                  - delay: 10ms
+                  - switch.turn_on: bus_out_en
+                  - switch.turn_on: usb_otg_en
     turn_off_action:
       - switch.turn_off: usb_otg_en
       - switch.turn_off: bus_out_en
