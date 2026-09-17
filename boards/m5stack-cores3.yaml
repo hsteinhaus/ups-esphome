@@ -121,6 +121,14 @@ sensor:
     battery_charging:
       name: "Battery Charging"
 
+binary_sensor:
+  # Also pulls in the binary_sensor component, which the axp2101 above emits
+  # code for (battery_charging) without declaring in AUTO_LOAD. Without a
+  # binary_sensor platform somewhere, the build fails on a missing
+  # binary_sensor.h -- see README, upstream fix pending.
+  - platform: status
+    name: "Status"
+
 # USB-C host power. Turning this on makes the CoreS3 SOURCE 5V on its USB-C
 # port, so the board can no longer be powered through it -- see README.
 switch:

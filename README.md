@@ -28,6 +28,18 @@ upstream ESPHome. Only the AXP2101 PMU and AW9523B IO expander come from
 [`m5stack/esphome-yaml`](https://github.com/m5stack/esphome-yaml), which is the
 actively maintained set — the older standalone `esphome-axp2101` forks are not.
 
+## Upstream issue carried here
+
+`m5stack/esphome-yaml`'s `axp2101` sensor platform generates code for a
+`battery_charging` binary sensor but does not declare `AUTO_LOAD =
+["binary_sensor"]`, so a config using it without some other binary sensor fails
+to build on a missing `binary_sensor.h`. Their own sample YAML hides this by
+declaring GPIO binary sensors for the audio interrupts.
+
+The board package therefore declares a `status` binary sensor. Once the
+`AUTO_LOAD` is fixed upstream, that entity is still worth keeping, but it
+stops being required.
+
 ## Hardware notes
 
 Both of these come from the CoreS3 having exactly one USB-C port, shared
