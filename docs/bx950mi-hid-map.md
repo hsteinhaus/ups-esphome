@@ -113,3 +113,31 @@ Fields under `FF86:*` and `FFFF:*` are APC vendor-specific and unnamed; report
 [ 80] rpt=0xE3 feature bit= 40+8  lmin=0 lmax=255 exp=0  0000:0000.FFFF:00FF.FFFF:00EF
 [ 81] rpt=0xE3 feature bit= 48+8  lmin=0 lmax=255 exp=0  0000:0000.FFFF:00FF.FFFF:00EF
 ```
+
+## Power sensor accuracy, measured
+
+`UPS Power` is derived as `PercentLoad / 100 x ConfigActivePower`, with no
+calibration: the UPS reports its own rating. Validated against an external
+meter on the output side, 2026-09-17:
+
+| | |
+|---|---|
+| Nominal (`ConfigActivePower`, report 0x52) | 520 W, matching the BX950MI rating |
+| Baseline load | 16 %, 83 W |
+| With test load | 92-93 %, 478.4-483.6 W |
+| Reported delta | 395-401 W |
+| **Externally measured load** | **399 W** |
+
+The delta brackets the measured value within ~1 W of the mean, so the UPS's own
+load estimate needs no correction factor.
+
+The two plateau readings differ by exactly 5.2 W, which is 1 % of 520 W:
+`PercentLoad` is whole-percent, so that is the sensor's resolution floor. A few
+watts of disagreement is quantisation, not error.
+
+`UPS Overload` correctly stayed off at 93 %.
+
+Had `ConfigActivePower` been read from usage 0x40 (`ConfigVoltage`, ~230)
+instead of 0x44, the same load would have computed ~212 W -- wrong, but
+plausible enough to accept. The usage IDs are worth checking against
+`hid_pdc.c`'s table rather than recalling them.
