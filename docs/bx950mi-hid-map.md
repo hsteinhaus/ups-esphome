@@ -10,6 +10,23 @@ reference, not a substitute.
 
 ## What it tells us
 
+**The interrupt endpoint is 6 bytes wide.**
+
+```
+bEndpointAddress 0x81   EP 1 IN
+bmAttributes 0x3        INT
+wMaxPacketSize 6
+bInterval 10
+```
+
+ESP-IDF requires every IN transfer to be an integer multiple of the endpoint's
+`wMaxPacketSize`. The component first submitted a hardcoded 16 bytes, which is
+not a multiple of 6, so the host stack refused all of them and the endpoint
+never delivered -- indistinguishable from a UPS that simply never pushes, and
+visible only as one warning at connect. Address and length now come from the
+configuration descriptor. `bInterval 10` is the device's offer: once the
+endpoint works, a status change arrives within about 10 ms.
+
 **Status pushes itself.** Report `0x16` carries the whole `PresentStatus`
 bitfield and is an *input* report, so it arrives unprompted on endpoint 0x81
 along with `0x0C` RemainingCapacity, `0x13` ACPresent and `0x14`
