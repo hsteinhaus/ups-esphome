@@ -213,7 +213,10 @@ switch:
   - platform: template
     id: usb_host_power
     name: "USB Host 5V"
-    optimistic: true
+    # Not optimistic: an optimistic switch publishes the requested state after
+    # the action, overwriting a refusal and reporting 5V that is not there.
+    # Every path below publishes what actually happened instead.
+    optimistic: false
     web_server:
       sorting_group_id: group_board
     # Persists across reboots: on the UPS the board is unreachable, so a reboot
@@ -266,8 +269,14 @@ switch:
                   - delay: 10ms
                   - switch.turn_on: bus_out_en
                   - switch.turn_on: usb_otg_en
+                  - switch.template.publish:
+                      id: usb_host_power
+                      state: true
     turn_off_action:
       - switch.turn_off: usb_otg_en
       - switch.turn_off: bus_out_en
       - delay: 10ms
       - switch.turn_off: vbus_boost_en
+      - switch.template.publish:
+          id: usb_host_power
+          state: false
