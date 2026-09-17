@@ -2,16 +2,42 @@
 # Pin map per https://docs.m5stack.com/en/core/CoreS3
 # AW9523B bit assignments cross-checked against M5Unified Power_Class.cpp.
 
+substitutions:
+  # Consecutive boots that failed to reach boost_settle_time with VBUS asserted
+  # before the restore is abandoned.
+  boost_boot_limit: "3"
+  boost_settle_time: 30s
+
 esphome:
   on_boot:
     # Between axp2101 setup (DATA, 600) and display setup, so the panel and
     # touch rails are live before either is initialised.
-    priority: 500
-    then:
-      - output.turn_on: rail_aldo1
-      - output.turn_on: rail_aldo2
-      - output.turn_on: rail_bldo1
-      - output.turn_on: rail_bldo2
+    - priority: 500
+      then:
+        - output.turn_on: rail_aldo1
+        - output.turn_on: rail_aldo2
+        - output.turn_on: rail_bldo1
+        - output.turn_on: rail_bldo2
+    # A boot that survives this long was not a brownout, so the attempt counter
+    # starts again from zero and a manual turn-on stops being counted.
+    - priority: -100
+      then:
+        - delay: $boost_settle_time
+        - lambda: |-
+            id(boost_boot_attempts) = 0;
+            id(boot_settled) = true;
+
+globals:
+  # Survives the reset, which is the whole point: a brownout loop is only
+  # visible by comparing this boot against the ones before it.
+  - id: boost_boot_attempts
+    type: uint8_t
+    restore_value: true
+    initial_value: "0"
+  - id: boot_settled
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 esp32:
   variant: esp32s3
@@ -187,11 +213,30 @@ switch:
     #
     # Boost before switches on, switches off before boost: a half-applied
     # sequence never reports the output live while the converter is stopped.
+    #
+    # Asserting the boost on a flat battery browns the rail out, and the board
+    # reboots into the same restore: a loop it cannot leave, because sourcing
+    # VBUS also blocks charging on the same port. Counting boots that never
+    # settle breaks it whatever the cause -- flat cell, host feeding the port,
+    # or a short on the far end.
     turn_on_action:
-      - switch.turn_on: vbus_boost_en
-      - delay: 10ms
-      - switch.turn_on: bus_out_en
-      - switch.turn_on: usb_otg_en
+      - if:
+          condition:
+            lambda: "return !id(boot_settled) && id(boost_boot_attempts) >= $boost_boot_limit;"
+          then:
+            - logger.log:
+                level: WARN
+                format: "USB Host 5V restore abandoned after %u boots that never settled"
+                args: ["id(boost_boot_attempts)"]
+            - switch.template.publish:
+                id: usb_host_power
+                state: false
+          else:
+            - lambda: "if (!id(boot_settled)) id(boost_boot_attempts)++;"
+            - switch.turn_on: vbus_boost_en
+            - delay: 10ms
+            - switch.turn_on: bus_out_en
+            - switch.turn_on: usb_otg_en
     turn_off_action:
       - switch.turn_off: usb_otg_en
       - switch.turn_off: bus_out_en

@@ -42,16 +42,44 @@ and battery voltage tracking (13.60 V float -> 12.40 V loaded). Recovery
 restores every flag. Power: 399 W measured externally vs 395-401 W reported.
 Overload correctly off at 93 %.
 
+## Detection latency
+
+Confirmed on the display: flags lagged a mains cut, so the interrupt endpoint
+was not delivering and everything came from the 10 s poll. Three causes, all
+addressed:
+
+- The endpoint address and transfer length were hardcoded (`0x81`, 16 bytes).
+  ESP-IDF rejects an IN transfer whose length is not a multiple of the
+  endpoint's `wMaxPacketSize`, so a wrong guess silences the endpoint with one
+  log line. Both now come from the configuration descriptor, and the interface
+  claimed is the one the descriptor names.
+- A refused `transfer_in()` ended the subscription permanently. `loop()` now
+  resubmits whenever none is outstanding.
+- Polling is tiered: status reports every `status_interval` (1 s), measurements
+  every `poll_interval` (10 s), device ratings once. A cycle runs one transfer
+  at a time, so polling can no longer exhaust the transfer pool and take the
+  interrupt endpoint's resubmit down with it.
+
+Worst-case detection is now `status_interval` even if no push ever arrives.
+Arriving pushes are logged as `push report 0x..` at DEBUG, which is how to tell
+the two paths apart.
+
+## Boot-loop guard
+
+Asserting the 5 V boost on a flat battery browns out the rail, and the board
+reboots into the same restored state -- a loop it cannot leave, because
+sourcing VBUS also blocks charging on the same port. Observed once, with the
+battery drained flat while the board sourced VBUS to the UPS. `boost_boot_limit`
+consecutive boots that never reach `boost_settle_time` abandon the restore.
+
+**The board cannot charge while `USB Host 5V` is on.** The PD splitter is a
+requirement for the permanent install, not an optimisation.
+
 ## Still open
 
-1. **Interrupt vs poll latency.** The mains transition landed on a 10 s poll
-   boundary, so the interrupt endpoint has never been proven to deliver.
-   Detection is correct either way but may be up to 10 s late, which matters if
-   anything triggers a shutdown from it. Check by cycling `USB Host 5V` and
-   reading the connect log for the `could not claim interface` line.
-2. **`/update` browser OTA** is registered but never exercised. It is the
+1. **`/update` browser OTA** is registered but never exercised. It is the
    recovery path once the board is at the UPS -- test it while still reachable.
-3. **Upstream reports not filed** (see below).
+1. **Upstream reports not filed** (see below).
 
 ## Upstream bugs found
 

@@ -21,11 +21,7 @@ static constexpr uint16_t DESC_TYPE_HID_REPORT = 0x2200;
 static constexpr uint8_t REQ_GET_REPORT = 0x01;
 static constexpr uint16_t REPORT_TYPE_FEATURE = 0x0300;
 
-static constexpr uint16_t HID_INTERFACE = 0;
-
-// The device exposes a single interface with one interrupt IN endpoint; see
-// docs/bx950mi-hid-map.md.
-static constexpr uint8_t EP_INTERRUPT_IN = 0x81;
+// Feature reports are short; the descriptor's own field offsets bound them.
 static constexpr uint16_t REPORT_READ_LEN = 16;
 
 // usb_host raises the control transfer limit to max_packet_size minus the
@@ -59,6 +55,8 @@ struct FieldSpec {
   uint16_t ancestor_id;
   uint16_t leaf_page;
   uint16_t leaf_id;
+  // A device rating rather than a measurement: read once, then never again.
+  bool constant;
 };
 
 // The same leaf usage means different things under different collections, so
@@ -70,7 +68,7 @@ static const FieldSpec METRIC_SPECS[METRIC_COUNT] = {
     {PAGE_POWER, U_INPUT, PAGE_POWER, 0x0030},             // Input.Voltage
     {PAGE_POWER, U_BATTERY, PAGE_POWER, 0x0030},           // Battery.Voltage
     {PAGE_POWER, U_POWER_CONVERTER, PAGE_POWER, 0x0035},   // PercentLoad
-    {PAGE_POWER, U_POWER_CONVERTER, PAGE_POWER, 0x0044},   // ConfigActivePower
+    {PAGE_POWER, U_POWER_CONVERTER, PAGE_POWER, 0x0044, true},  // ConfigActivePower
     {0, 0, 0, 0},                                          // METRIC_POWER: derived
 };
 
@@ -85,20 +83,65 @@ static const FieldSpec FLAG_SPECS[FLAG_COUNT] = {
     {PAGE_POWER, U_PRESENT_STATUS, PAGE_BATTERY, 0x00D1},  // BatteryPresent
 };
 
+// The interrupt endpoint's address and packet size come from the device, not
+// from a constant: the host stack rejects an IN transfer whose length is not a
+// multiple of wMaxPacketSize, and a rejected transfer means the endpoint never
+// delivers -- a silent failure that looks exactly like a UPS that never pushes.
+bool APCUPSClient::discover_hid_interface_() {
+  const usb_config_desc_t *config_desc;
+  if (usb_host_get_active_config_descriptor(this->device_handle_, &config_desc) != ESP_OK) {
+    ESP_LOGE(TAG, "no active configuration descriptor");
+    return false;
+  }
+
+  for (uint8_t intf = 0; intf < config_desc->bNumInterfaces; intf++) {
+    int offset = 0;
+    const usb_intf_desc_t *intf_desc = usb_parse_interface_descriptor(config_desc, intf, 0, &offset);
+    if (intf_desc == nullptr || intf_desc->bInterfaceClass != USB_CLASS_HID)
+      continue;
+
+    for (uint8_t i = 0; i < intf_desc->bNumEndpoints; i++) {
+      int ep_offset = offset;
+      const usb_ep_desc_t *ep =
+          usb_parse_endpoint_descriptor_by_index(intf_desc, i, config_desc->wTotalLength, &ep_offset);
+      if (ep == nullptr || (ep->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) != USB_BM_ATTRIBUTES_XFER_INT ||
+          !(ep->bEndpointAddress & usb_host::USB_DIR_IN))
+        continue;
+
+      this->hid_interface_ = intf_desc->bInterfaceNumber;
+      this->interrupt_ep_ = ep->bEndpointAddress;
+      this->interrupt_mps_ = std::min<uint16_t>(ep->wMaxPacketSize, usb_host::USB_MAX_PACKET_SIZE);
+      ESP_LOGI(TAG, "HID interface %u, interrupt IN 0x%02X, mps %u, interval %ums", this->hid_interface_,
+               this->interrupt_ep_, this->interrupt_mps_, ep->bInterval);
+      return true;
+    }
+  }
+
+  ESP_LOGE(TAG, "no HID interrupt IN endpoint found");
+  return false;
+}
+
 void APCUPSClient::on_connected() {
   ESP_LOGI(TAG, "UPS connected, requesting HID report descriptor");
   this->bound_ = false;
   this->log_index_ = -1;
   this->descriptor_ready_ = false;
   this->descriptor_len_ = 0;
-  this->feature_report_count_ = 0;
+  this->status_report_count_ = 0;
+  this->metric_report_count_ = 0;
+  this->constant_report_count_ = 0;
+  this->interrupt_pending_ = false;
+  this->interrupt_ep_ = 0;
+
+  if (!this->discover_hid_interface_())
+    return;
 
   // usb_host's USBClient never claims an interface, and a transfer cannot be
   // submitted to an endpoint whose interface is unclaimed -- so the interrupt
   // endpoint stays silent without this. usb_uart does the same by hand.
-  const esp_err_t err = usb_host_interface_claim(this->handle_, this->device_handle_, HID_INTERFACE, 0);
+  const esp_err_t err = usb_host_interface_claim(this->handle_, this->device_handle_, this->hid_interface_, 0);
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "could not claim interface %u: %s", HID_INTERFACE, esp_err_to_name(err));
+    ESP_LOGE(TAG, "could not claim interface %u: %s", this->hid_interface_, esp_err_to_name(err));
   } else {
     this->interface_claimed_ = true;
   }
@@ -111,12 +154,15 @@ void APCUPSClient::on_disconnected() {
   this->bound_ = false;
   this->log_index_ = -1;
   this->descriptor_ready_ = false;
-  this->feature_report_count_ = 0;
+  this->status_report_count_ = 0;
+  this->metric_report_count_ = 0;
+  this->constant_report_count_ = 0;
+  this->interrupt_pending_ = false;
 
   if (this->interface_claimed_) {
-    usb_host_endpoint_halt(this->device_handle_, EP_INTERRUPT_IN);
-    usb_host_endpoint_flush(this->device_handle_, EP_INTERRUPT_IN);
-    usb_host_interface_release(this->handle_, this->device_handle_, HID_INTERFACE);
+    usb_host_endpoint_halt(this->device_handle_, this->interrupt_ep_);
+    usb_host_endpoint_flush(this->device_handle_, this->interrupt_ep_);
+    usb_host_interface_release(this->handle_, this->device_handle_, this->hid_interface_);
     this->interface_claimed_ = false;
   }
 
@@ -128,7 +174,7 @@ void APCUPSClient::request_report_descriptor_() {
   const std::vector<uint8_t> read_buffer(DESCRIPTOR_REQUEST_LEN);
 
   const bool submitted = this->control_transfer(
-      type, REQ_GET_DESCRIPTOR, DESC_TYPE_HID_REPORT, HID_INTERFACE,
+      type, REQ_GET_DESCRIPTOR, DESC_TYPE_HID_REPORT, this->hid_interface_,
       // CALLBACK CONTEXT: USB task. Copy and hand over; do not parse here.
       [this](const usb_host::TransferStatus &status) {
         if (!status.success || status.data_len <= SETUP_PACKET_SIZE) {
@@ -183,58 +229,121 @@ void APCUPSClient::bind_fields_() {
 
   // Collect the distinct feature reports that actually back a configured
   // entity, so polling costs one transfer per report rather than per field.
-  this->feature_report_count_ = 0;
-  auto remember = [this](const hid_pdc_field_t *f) {
+  this->status_report_count_ = 0;
+  this->metric_report_count_ = 0;
+  this->constant_report_count_ = 0;
+  auto remember = [](uint8_t *ids, size_t &count, const hid_pdc_field_t *f) {
     if (f == nullptr)
       return;
-    for (size_t i = 0; i < this->feature_report_count_; i++)
-      if (this->feature_report_ids_[i] == f->report_id)
+    for (size_t i = 0; i < count; i++)
+      if (ids[i] == f->report_id)
         return;
-    if (this->feature_report_count_ < MAX_FEATURE_REPORTS)
-      this->feature_report_ids_[this->feature_report_count_++] = f->report_id;
+    if (count < MAX_FEATURE_REPORTS)
+      ids[count++] = f->report_id;
   };
-  for (uint8_t i = 0; i < METRIC_COUNT; i++)
-    if (this->metric_sensors_[i] != nullptr)
-      remember(this->metric_feature_[i]);
-  // Flags are polled even when the interrupt endpoint also carries them: the
-  // UPS only pushes on change, so without a poll a flag keeps its default
-  // until something happens, which on a healthy UPS could be never.
+  auto listed = [](const uint8_t *ids, size_t count, const hid_pdc_field_t *f) {
+    for (size_t i = 0; f != nullptr && i < count; i++)
+      if (ids[i] == f->report_id)
+        return true;
+    return false;
+  };
+
+  // Flags are polled even though the interrupt endpoint also carries them: the
+  // UPS only pushes on change, so without a poll a flag keeps its default until
+  // something happens, which on a healthy UPS could be never. This tier is also
+  // what bounds detection latency whenever a push is missed.
   for (uint8_t i = 0; i < FLAG_COUNT; i++)
     if (this->flag_sensors_[i] != nullptr)
-      remember(this->flag_feature_[i]);
+      remember(this->status_report_ids_, this->status_report_count_, this->flag_feature_[i]);
 
-  ESP_LOGI(TAG, "bound %u entities, polling %u feature reports every %us", bound, this->feature_report_count_,
-           this->poll_interval_ / 1000);
+  // A report already on a faster tier is never repeated on a slower one.
+  for (uint8_t i = 0; i < METRIC_COUNT; i++) {
+    if (this->metric_sensors_[i] == nullptr)
+      continue;
+    const hid_pdc_field_t *f = this->metric_feature_[i];
+    if (listed(this->status_report_ids_, this->status_report_count_, f))
+      continue;
+    if (METRIC_SPECS[i].constant)
+      remember(this->constant_report_ids_, this->constant_report_count_, f);
+    else
+      remember(this->metric_report_ids_, this->metric_report_count_, f);
+  }
+
+  ESP_LOGI(TAG, "bound %u entities: %u status reports every %ums, %u metric every %ums, %u constant", bound,
+           this->status_report_count_, this->status_interval_, this->metric_report_count_, this->poll_interval_,
+           this->constant_report_count_);
 }
 
 void APCUPSClient::start_interrupt_in_() {
+  if (this->interrupt_ep_ == 0 || this->interrupt_pending_)
+    return;
+
+  this->interrupt_pending_ = true;
   const bool submitted = this->transfer_in(
-      EP_INTERRUPT_IN,
+      this->interrupt_ep_,
       // CALLBACK CONTEXT: USB task.
       [this](const usb_host::TransferStatus &status) {
-        if (status.success && status.data_len >= 2)
+        if (status.success && status.data_len >= 2) {
+          ESP_LOGD(TAG, "push report 0x%02X (%u bytes)", status.data[0], status.data_len);
           this->decode_report_(HID_PDC_INPUT, status.data[0], status.data + 1, status.data_len - 1);
-        // Re-arm regardless: a failed read must not end the subscription.
+        }
+        // Re-arm at once rather than waiting for the next loop: a status change
+        // arriving between the two would otherwise be lost.
+        this->interrupt_pending_ = false;
         this->start_interrupt_in_();
       },
-      REPORT_READ_LEN);
+      this->interrupt_mps_);
 
-  if (!submitted)
-    ESP_LOGW(TAG, "could not submit interrupt read");
+  if (!submitted) {
+    // The subscription is gone until something resubmits, so let loop() retry
+    // instead of leaving the endpoint permanently silent after one bad moment.
+    this->interrupt_pending_ = false;
+    ESP_LOGW(TAG, "could not submit interrupt read on 0x%02X", this->interrupt_ep_);
+  }
 }
 
-void APCUPSClient::poll_feature_reports_() {
-  for (size_t i = 0; i < this->feature_report_count_; i++) {
-    const uint8_t report_id = this->feature_report_ids_[i];
-    const uint8_t type = usb_host::USB_DIR_IN | usb_host::USB_TYPE_CLASS | usb_host::USB_RECIP_INTERFACE;
-    const std::vector<uint8_t> read_buffer(REPORT_READ_LEN);
+bool APCUPSClient::constants_pending_() const {
+  for (uint8_t i = 0; i < METRIC_COUNT; i++)
+    if (METRIC_SPECS[i].constant && this->metric_sensors_[i] != nullptr && !this->metric_sensors_[i]->has_state())
+      return true;
+  return false;
+}
 
-    this->control_transfer(
-        type, REQ_GET_REPORT, REPORT_TYPE_FEATURE | report_id, HID_INTERFACE,
-        // CALLBACK CONTEXT: USB task.
-        [this, report_id](const usb_host::TransferStatus &status) {
-          if (!status.success || status.data_len <= SETUP_PACKET_SIZE)
-            return;
+void APCUPSClient::start_poll_cycle_(bool include_status, bool include_metrics) {
+  auto append = [this](const uint8_t *ids, size_t count) {
+    for (size_t i = 0; i < count && this->cycle_len_ < MAX_FEATURE_REPORTS; i++)
+      this->cycle_ids_[this->cycle_len_++] = ids[i];
+  };
+
+  this->cycle_len_ = 0;
+  if (include_status)
+    append(this->status_report_ids_, this->status_report_count_);
+  if (include_metrics)
+    append(this->metric_report_ids_, this->metric_report_count_);
+  if (include_metrics && this->constants_pending_())
+    append(this->constant_report_ids_, this->constant_report_count_);
+
+  this->cycle_cursor_ = 0;
+  this->poll_generation_++;
+  this->poll_next_(this->poll_generation_);
+}
+
+// One transfer in flight at a time. Submitting a whole tier at once competes
+// with the interrupt endpoint for the same transfer pool, and the endpoint
+// loses its subscription for good if its resubmit is the one that is refused.
+void APCUPSClient::poll_next_(uint8_t generation) {
+  if (this->cycle_cursor_ >= this->cycle_len_)
+    return;
+
+  const uint8_t report_id = this->cycle_ids_[this->cycle_cursor_++];
+  const uint8_t type = usb_host::USB_DIR_IN | usb_host::USB_TYPE_CLASS | usb_host::USB_RECIP_INTERFACE;
+  const std::vector<uint8_t> read_buffer(REPORT_READ_LEN);
+
+  const bool submitted = this->control_transfer(
+      type, REQ_GET_REPORT, REPORT_TYPE_FEATURE | report_id, this->hid_interface_,
+      // CALLBACK CONTEXT: USB task.
+      [this, report_id, generation](const usb_host::TransferStatus &status) {
+        if (status.success && status.data_len > SETUP_PACKET_SIZE) {
           const uint8_t *body = status.data + SETUP_PACKET_SIZE;
           size_t body_len = status.data_len - SETUP_PACKET_SIZE;
           // A device using report IDs prefixes the reply with the ID, but not
@@ -244,9 +353,18 @@ void APCUPSClient::poll_feature_reports_() {
             body_len--;
           }
           this->decode_report_(HID_PDC_FEATURE, report_id, body, body_len);
-        },
-        read_buffer);
-  }
+        }
+        // A cycle the timer already replaced must not chain on top of its
+        // successor and poll every report twice.
+        if (generation == this->poll_generation_)
+          this->poll_next_(generation);
+      },
+      read_buffer);
+
+  // No callback follows a rejected submit, so this cycle ends here; the next
+  // tick starts a fresh one, which is the recovery path.
+  if (!submitted)
+    ESP_LOGW(TAG, "could not poll report 0x%02X", report_id);
 }
 
 void APCUPSClient::decode_report_(uint8_t report_type, uint8_t report_id, const uint8_t *payload, size_t len) {
@@ -302,8 +420,8 @@ void APCUPSClient::loop() {
 
     this->bind_fields_();
     this->start_interrupt_in_();
-    this->poll_feature_reports_();
-    this->last_poll_ = millis();
+    this->start_poll_cycle_(true, true);
+    this->last_poll_ = this->last_status_poll_ = millis();
     this->log_index_ = 0;
     did_work = true;
   }
@@ -315,9 +433,18 @@ void APCUPSClient::loop() {
 
   if (this->bound_) {
     const uint32_t now = millis();
-    if (now - this->last_poll_ >= this->poll_interval_) {
-      this->last_poll_ = now;
-      this->poll_feature_reports_();
+    // Recovers a subscription lost to a refused submit; a no-op while one is
+    // outstanding, which is almost always.
+    this->start_interrupt_in_();
+
+    const bool status_due = now - this->last_status_poll_ >= this->status_interval_;
+    const bool metrics_due = now - this->last_poll_ >= this->poll_interval_;
+    if (status_due || metrics_due) {
+      if (status_due)
+        this->last_status_poll_ = now;
+      if (metrics_due)
+        this->last_poll_ = now;
+      this->start_poll_cycle_(status_due, metrics_due);
     }
     // Stay awake while a UPS is attached: the poll timer has no other clock.
     did_work = true;

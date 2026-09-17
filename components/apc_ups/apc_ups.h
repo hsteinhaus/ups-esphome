@@ -54,15 +54,19 @@ class APCUPSClient : public usb_host::USBClient {
   void set_metric_sensor(Metric m, sensor::Sensor *s) { this->metric_sensors_[m] = s; }
   void set_flag_sensor(Flag f, binary_sensor::BinarySensor *s) { this->flag_sensors_[f] = s; }
   void set_poll_interval(uint32_t ms) { this->poll_interval_ = ms; }
+  void set_status_interval(uint32_t ms) { this->status_interval_ = ms; }
 
  protected:
   void on_connected() override;
   void on_disconnected() override;
 
+  bool discover_hid_interface_();
   void request_report_descriptor_();
   void bind_fields_();
   void start_interrupt_in_();
-  void poll_feature_reports_();
+  void start_poll_cycle_(bool include_status, bool include_metrics);
+  void poll_next_(uint8_t generation);
+  bool constants_pending_() const;
   void decode_report_(uint8_t report_type, uint8_t report_id, const uint8_t *payload, size_t len);
   void log_next_fields_();
   void publish_power_();
@@ -88,15 +92,39 @@ class APCUPSClient : public usb_host::USBClient {
   const hid_pdc_field_t *flag_input_[FLAG_COUNT]{};
   const hid_pdc_field_t *flag_feature_[FLAG_COUNT]{};
 
+  // Polled in three tiers. Status carries the flags and must be fast; the
+  // measurements the UPS reports change slowly; a rating cannot change at all,
+  // so it is read until it arrives and then never again.
   static constexpr size_t MAX_FEATURE_REPORTS = 12;
-  uint8_t feature_report_ids_[MAX_FEATURE_REPORTS]{};
-  size_t feature_report_count_{0};
+  uint8_t status_report_ids_[MAX_FEATURE_REPORTS]{};
+  size_t status_report_count_{0};
+  uint8_t metric_report_ids_[MAX_FEATURE_REPORTS]{};
+  size_t metric_report_count_{0};
+  uint8_t constant_report_ids_[MAX_FEATURE_REPORTS]{};
+  size_t constant_report_count_{0};
+
+  // One cycle's worth of report IDs, assembled from the tiers that are due.
+  uint8_t cycle_ids_[MAX_FEATURE_REPORTS]{};
+  size_t cycle_len_{0};
+  size_t cycle_cursor_{0};
+  // Lets a callback tell whether the cycle it belongs to is still current.
+  volatile uint8_t poll_generation_{0};
+
+  // The interrupt endpoint, read from the configuration descriptor. A hardcoded
+  // length that is not a multiple of wMaxPacketSize is rejected by the host
+  // stack for every IN transfer, which silences the endpoint.
+  uint8_t hid_interface_{0};
+  uint8_t interrupt_ep_{0};
+  uint16_t interrupt_mps_{0};
+  volatile bool interrupt_pending_{false};
 
   float last_load_{NAN};
   float last_nominal_power_{NAN};
 
   uint32_t poll_interval_{10000};
+  uint32_t status_interval_{1000};
   uint32_t last_poll_{0};
+  uint32_t last_status_poll_{0};
   bool interface_claimed_{false};
 };
 

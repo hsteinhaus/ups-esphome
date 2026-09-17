@@ -11,6 +11,7 @@ BX950MI_PID = 0x0002
 
 CONF_APC_UPS_ID = "apc_ups_id"
 CONF_POLL_INTERVAL = "poll_interval"
+CONF_STATUS_INTERVAL = "status_interval"
 
 apc_ups_ns = cg.esphome_ns.namespace("apc_ups")
 APCUPSClient = apc_ups_ns.class_("APCUPSClient", usb_host.USBClient)
@@ -23,10 +24,15 @@ CONFIG_SCHEMA = usb_host.usb_device_schema(
     APCUPSClient, vid=APC_VID, pid=BX950MI_PID
 ).extend(
     {
-        # Status arrives unprompted on the interrupt endpoint; only the
-        # measurement feature reports need polling.
+        # Measurements move slowly and cost a transfer each.
         cv.Optional(
             CONF_POLL_INTERVAL, default="10s"
+        ): cv.positive_time_period_milliseconds,
+        # The interrupt endpoint pushes status changes, but a missed push must
+        # not go unnoticed for a whole measurement period: this is the upper
+        # bound on how late a mains loss can be seen.
+        cv.Optional(
+            CONF_STATUS_INTERVAL, default="1s"
         ): cv.positive_time_period_milliseconds,
     }
 )
@@ -35,3 +41,4 @@ CONFIG_SCHEMA = usb_host.usb_device_schema(
 async def to_code(config):
     var = await usb_host.register_usb_client(config)
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
+    cg.add(var.set_status_interval(config[CONF_STATUS_INTERVAL]))
