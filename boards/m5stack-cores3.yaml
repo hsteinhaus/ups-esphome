@@ -157,7 +157,11 @@ switch:
     id: usb_host_power
     name: "USB Host 5V"
     optimistic: true
-    restore_mode: ALWAYS_OFF
+    # Persists across reboots: on the UPS the board is unreachable, so a reboot
+    # or OTA must bring VBUS back by itself rather than wait for a manual
+    # toggle. Restoring re-runs turn_on_action, and the gpio switches above are
+    # declared first, so their ALWAYS_OFF writes land before this re-asserts.
+    restore_mode: RESTORE_DEFAULT_OFF
     # BUS_OUT_EN low ties the boost output to the BUS input path, so VBUS never
     # rises from USB_OTG_EN alone -- measured 0V with only boost+OTG set, 5.007V
     # once BUS_OUT_EN joined them. M5Unified's setUsbOutput omits it because its

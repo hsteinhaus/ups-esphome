@@ -41,6 +41,7 @@ logger:
     switch.gpio: INFO
     light: WARN
     axp2101: WARN
+    apc_ups: DEBUG
   # The OTG peripheral owns the PHY, so there is no serial console to log to.
   baud_rate: 0
 
@@ -65,11 +66,21 @@ wifi:
 
 captive_portal:
 
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [apc_ups]
+
 usb_host:
-  devices:
-    - id: apc_ups
-      vid: 0x051D # American Power Conversion
-      pid: 0x0002 # Back-UPS BX950MI
+  # Transfer buffers are allocated at this size, and a control transfer's
+  # payload is limited to it minus the 8-byte setup packet. The default 64
+  # leaves 56 bytes, far short of a HID report descriptor, which must arrive in
+  # a single transfer because GET_DESCRIPTOR has no offset parameter.
+  max_packet_size: 1024
+
+apc_ups:
+  id: ups
 
 font:
   - file: "gfonts://Roboto"

@@ -109,8 +109,13 @@ sources none. Power the CoreS3 separately.
   own supply -- so the battery is what makes bench testing safe.
 - **Permanent:** a PD splitter cable feeding the CoreS3 while it hosts the UPS.
 
-The switch defaults to off and never restores on, so a reboot cannot silently
-drop the board's power.
+The switch persists across reboots (`RESTORE_DEFAULT_OFF`: last state, off when
+unknown). On the UPS the board is unreachable, so a reboot or OTA has to bring
+VBUS back on its own.
+
+The consequence is that a board which was sourcing VBUS will do so again the
+moment it boots. Power it from something other than its own USB-C port before
+enabling the switch, or the next reboot cuts its supply with no way in.
 
 ### Sourcing VBUS needs three bits, not two
 
