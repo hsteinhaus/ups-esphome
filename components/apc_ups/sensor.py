@@ -4,12 +4,14 @@ import esphome.config_validation as cv
 from esphome.const import (
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_DURATION,
+    DEVICE_CLASS_POWER,
     DEVICE_CLASS_POWER_FACTOR,
     DEVICE_CLASS_VOLTAGE,
     STATE_CLASS_MEASUREMENT,
     UNIT_PERCENT,
     UNIT_SECOND,
     UNIT_VOLT,
+    UNIT_WATT,
 )
 
 from . import BASE_SCHEMA, CONF_APC_UPS_ID, Metric
@@ -21,6 +23,8 @@ CONF_RUNTIME = "runtime"
 CONF_INPUT_VOLTAGE = "input_voltage"
 CONF_BATTERY_VOLTAGE = "battery_voltage"
 CONF_LOAD = "load"
+CONF_POWER = "power"
+CONF_NOMINAL_POWER = "nominal_power"
 
 # Keys map to the Metric enum; the C++ side holds the usage paths.
 METRICS = {
@@ -69,6 +73,27 @@ METRICS = {
             state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             icon="mdi:gauge",
+        ),
+    ),
+    # The UPS reports its own rating, so watts need no calibration.
+    CONF_NOMINAL_POWER: (
+        Metric.METRIC_NOMINAL_POWER,
+        sensor.sensor_schema(
+            unit_of_measurement=UNIT_WATT,
+            device_class=DEVICE_CLASS_POWER,
+            accuracy_decimals=0,
+            entity_category="diagnostic",
+            icon="mdi:flash-outline",
+        ),
+    ),
+    CONF_POWER: (
+        Metric.METRIC_POWER,
+        sensor.sensor_schema(
+            unit_of_measurement=UNIT_WATT,
+            device_class=DEVICE_CLASS_POWER,
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            icon="mdi:flash",
         ),
     ),
 }

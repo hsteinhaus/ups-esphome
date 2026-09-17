@@ -22,6 +22,9 @@ enum Metric : uint8_t {
   METRIC_INPUT_VOLTAGE,
   METRIC_BATTERY_VOLTAGE,
   METRIC_LOAD,
+  METRIC_NOMINAL_POWER,
+  // Derived from load and nominal power; has no usage path of its own.
+  METRIC_POWER,
   METRIC_COUNT,
 };
 
@@ -62,6 +65,7 @@ class APCUPSClient : public usb_host::USBClient {
   void poll_feature_reports_();
   void decode_report_(uint8_t report_type, uint8_t report_id, const uint8_t *payload, size_t len);
   void log_next_fields_();
+  void publish_power_();
 
   // Filled by the USB task, consumed by the main loop: parsing a few hundred
   // fields does not belong in a transfer callback.
@@ -87,6 +91,9 @@ class APCUPSClient : public usb_host::USBClient {
   static constexpr size_t MAX_FEATURE_REPORTS = 12;
   uint8_t feature_report_ids_[MAX_FEATURE_REPORTS]{};
   size_t feature_report_count_{0};
+
+  float last_load_{NAN};
+  float last_nominal_power_{NAN};
 
   uint32_t poll_interval_{10000};
   uint32_t last_poll_{0};

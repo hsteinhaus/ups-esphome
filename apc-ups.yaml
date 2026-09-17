@@ -131,7 +131,12 @@ display:
                   low ? "LOW BATTERY" : (on_battery ? "ON BATTERY" : "ONLINE"));
 
         it.printf(10, 80, id(font_body), Color::WHITE, "Charge   %.0f %%", id(ups_battery).state);
-        it.printf(10, 104, id(font_body), Color::WHITE, "Load     %.0f %%", id(ups_load).state);
+        if (id(ups_power).has_state()) {
+          it.printf(10, 104, id(font_body), Color::WHITE, "Load     %.0f %%  (%.0f W)",
+                    id(ups_load).state, id(ups_power).state);
+        } else {
+          it.printf(10, 104, id(font_body), Color::WHITE, "Load     %.0f %%", id(ups_load).state);
+        }
         it.printf(10, 128, id(font_body), Color::WHITE, "Runtime  %.0f min", id(ups_runtime).state / 60.0f);
         it.printf(170, 80, id(font_body), Color::WHITE, "In  %.0f V", id(ups_input_voltage).state);
         it.printf(170, 104, id(font_body), Color::WHITE, "Bat %.1f V", id(ups_battery_voltage).state);
@@ -177,6 +182,16 @@ sensor:
     load:
       name: "UPS Load"
       id: ups_load
+      web_server:
+        sorting_group_id: group_ups
+    power:
+      name: "UPS Power"
+      id: ups_power
+      web_server:
+        sorting_group_id: group_ups
+    nominal_power:
+      name: "UPS Nominal Power"
+      id: ups_nominal_power
       web_server:
         sorting_group_id: group_ups
 

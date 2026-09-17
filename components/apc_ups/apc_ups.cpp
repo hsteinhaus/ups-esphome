@@ -5,6 +5,7 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include <cmath>
 #include <cstring>
 
 namespace esphome::apc_ups {
@@ -69,6 +70,8 @@ static const FieldSpec METRIC_SPECS[METRIC_COUNT] = {
     {PAGE_POWER, U_INPUT, PAGE_POWER, 0x0030},             // Input.Voltage
     {PAGE_POWER, U_BATTERY, PAGE_POWER, 0x0030},           // Battery.Voltage
     {PAGE_POWER, U_POWER_CONVERTER, PAGE_POWER, 0x0035},   // PercentLoad
+    {PAGE_POWER, U_POWER_CONVERTER, PAGE_POWER, 0x0044},   // ConfigActivePower
+    {0, 0, 0, 0},                                          // METRIC_POWER: derived
 };
 
 static const FieldSpec FLAG_SPECS[FLAG_COUNT] = {
@@ -151,6 +154,8 @@ void APCUPSClient::bind_fields_() {
 
   for (uint8_t i = 0; i < METRIC_COUNT; i++) {
     const FieldSpec &s = METRIC_SPECS[i];
+    if (s.leaf_id == 0)
+      continue;  // derived, not backed by a descriptor field
     this->metric_input_[i] =
         hid_pdc_find(&this->map_, HID_PDC_INPUT, s.ancestor_page, s.ancestor_id, s.leaf_page, s.leaf_id);
     this->metric_feature_[i] =
@@ -253,7 +258,15 @@ void APCUPSClient::decode_report_(uint8_t report_type, uint8_t report_id, const 
     int32_t raw;
     if (!hid_pdc_extract(f, payload, len, &raw))
       continue;
-    s->publish_state(hid_pdc_scale(f, raw));
+    const float value = hid_pdc_scale(f, raw);
+    s->publish_state(value);
+
+    if (i == METRIC_LOAD)
+      this->last_load_ = value;
+    else if (i == METRIC_NOMINAL_POWER)
+      this->last_nominal_power_ = value;
+    if (i == METRIC_LOAD || i == METRIC_NOMINAL_POWER)
+      this->publish_power_();
   }
 
   for (uint8_t i = 0; i < FLAG_COUNT; i++) {
@@ -331,6 +344,15 @@ void APCUPSClient::log_next_fields_() {
 
   if (this->log_index_ >= this->map_.count)
     this->log_index_ = -1;
+}
+
+// The UPS reports its own rating, so output power needs no calibration: HID
+// expresses power in 1e-7 W and ConfigActivePower carries exp=7, giving watts.
+void APCUPSClient::publish_power_() {
+  sensor::Sensor *s = this->metric_sensors_[METRIC_POWER];
+  if (s == nullptr || std::isnan(this->last_load_) || std::isnan(this->last_nominal_power_))
+    return;
+  s->publish_state(this->last_load_ * this->last_nominal_power_ / 100.0f);
 }
 
 void APCUPSClient::dump_config() {
