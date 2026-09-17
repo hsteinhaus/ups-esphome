@@ -12,14 +12,35 @@ Stage 1 — in this repo now — is hardware bring-up. The UPS component follows
 | `boards/m5stack-cores3.yaml` | Board package: PMU rails, IO expander, display, touch, USB host power |
 | `cores3-bringup.yaml` | Stage-1 test config: display, touch and PMU telemetry |
 
-## Building
+## Secrets
 
-Create `secrets.yaml` next to the config with `wifi_ssid`, `wifi_password`,
-`api_key` and `ota_password`, then:
+ESPHome resolves `!secret <key>` against a `secrets.yaml` sitting next to the
+config it is building. Copy the template and fill it in:
 
 ```sh
-esphome run cores3-bringup.yaml
+cp secrets.yaml.example secrets.yaml
+head -c 32 /dev/urandom | base64   # value for api_key
 ```
+
+`secrets.yaml` is gitignored; `secrets.yaml.example` is tracked and holds
+placeholders only. A missing key fails at config validation, not at runtime,
+so a bad file is caught before anything reaches the device.
+
+## Building and flashing
+
+```sh
+esphome compile cores3-bringup.yaml
+tools/cores3.sh upload          # flash over USB
+tools/cores3.sh logs            # tail the console
+tools/cores3_bootlog.py "$(echo /dev/serial/by-id/usb-Espressif_USB_JTAG*)" 30
+```
+
+Use `tools/cores3.sh`, not `esphome ... --device /dev/ttyACM*`: kernel names
+renumber between boards and will happily flash the wrong target.
+
+The last command resets the board before reading. The ESP32-S3 console runs
+over USB-Serial-JTAG and does not re-attach after flashing, so a plain `logs`
+sits on a silent port while the board is running perfectly well.
 
 ## Component sources
 
