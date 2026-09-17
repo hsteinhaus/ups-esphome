@@ -12,7 +12,9 @@ packages:
   board: !include boards/m5stack-cores3.yaml
 
 logger:
-  level: DEBUG
+  # VERBOSE so the aw9523b driver prints the output mask it writes, which is
+  # how we tell "bits never set" from "bits set, hardware did nothing".
+  level: VERBOSE
   hardware_uart: USB_SERIAL_JTAG
 
 api:

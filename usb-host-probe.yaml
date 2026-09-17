@@ -1,0 +1,131 @@
+# Test 2: can the CoreS3 host a USB device at all?
+#
+# Wildcard vid/pid, so any device that enumerates gets logged. Run this with a
+# keyboard or mouse before going near the UPS -- it separates "the USB host
+# stack works" from "the APC HID decoding works".
+#
+# Claiming the OTG peripheral switches the shared PHY away from USB-Serial-JTAG:
+# no serial console, no USB flashing. Updates are OTA only from here.
+# Flash back with: esphome upload cores3-bringup.yaml --device <ip>
+
+substitutions:
+  name: usb-host-probe
+
+esphome:
+  name: ${name}
+  friendly_name: USB Host Probe
+
+packages:
+  board: !include boards/m5stack-cores3.yaml
+
+logger:
+  # Per-tag levels may only be quieter than the global one, so the global stays
+  # VERBOSE (descriptor dumps need it) and the chatty tags are muted by name.
+  # Without this, i2c and touch polling bury the enumeration events.
+  level: VERBOSE
+  logs:
+    i2c.idf: ERROR
+    spi_device: ERROR
+    FT63X6: WARN
+    touchscreen: WARN
+    display.mipi_spi: WARN
+    component: WARN
+    sensor: WARN
+    binary_sensor: WARN
+    text_sensor: WARN
+    uptime.sensor: WARN
+    wifi_info: WARN
+    api: WARN
+    api.service: WARN
+    web_server: ERROR
+    web_server_idf: ERROR
+    mdns: WARN
+    preferences: WARN
+    wifi: INFO
+    switch: INFO
+    template.switch: INFO
+    switch.gpio: INFO
+    light: WARN
+    axp2101: WARN
+  # The OTG peripheral owns the PHY, so there is no serial console to log to.
+  # Network logging only.
+  baud_rate: 0
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [axp2101_vbus, aw9523b_regs]
+
+aw9523b_regs:
+  update_interval: 3s
+
+binary_sensor:
+  - platform: axp2101_vbus
+    name: "VBUS Present"
+    update_interval: 2s
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+  - platform: web_server
+
+web_server:
+  port: 80
+  version: 3
+  local: true
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+
+captive_portal:
+
+usb_host:
+  # 0/0 matches anything. Narrow to 051d/0002 once enumeration is proven.
+  devices:
+    - id: any_usb_device
+      vid: 0
+      pid: 0
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 18
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 26
+
+display:
+  - id: !extend lcd
+    update_interval: 1s
+    lambda: |-
+      it.fill(Color::BLACK);
+      it.print(10, 8, id(font_title), Color(0x00, 0xC8, 0xFF), "USB Host Probe");
+
+      it.printf(10, 52, id(font_body), Color::WHITE, "IP:  %s",
+                id(wifi_ip).state.empty() ? "connecting..." : id(wifi_ip).state.c_str());
+
+      bool vbus = id(usb_host_power).state;
+      it.printf(10, 86, id(font_body), vbus ? Color(0x40, 0xFF, 0x40) : Color(0xFF, 0x60, 0x60),
+                "VBUS 5V: %s", vbus ? "ON" : "OFF");
+
+      if (!vbus) {
+        it.print(10, 120, id(font_body), Color(0xFF, 0xD0, 0x40),
+                 "Enable 'USB Host 5V' in web UI");
+      } else {
+        it.print(10, 120, id(font_body), Color(0x90, 0x90, 0x90), "Plug in a USB device");
+      }
+
+      it.print(10, 200, id(font_body), Color(0x80, 0x80, 0x80), "Watch log for 'New device'");
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: wifi_ip
+      name: "IP Address"
