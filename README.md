@@ -61,6 +61,34 @@ The board package therefore declares a `status` binary sensor. Once the
 `AUTO_LOAD` is fixed upstream, that entity is still worth keeping, but it
 stops being required.
 
+## The UPS as seen over USB
+
+Captured from the real device, enumerated by the CoreS3 running on its internal
+battery:
+
+```
+Manuf: American Power Conversion
+Prod:  Back-UPS BX950MI  FW:295202G -302202G
+Serial: 9B2504A10895
+idVendor 0x051d  idProduct 0x0002
+```
+
+| Property | Value |
+|---|---|
+| Interfaces | 1 |
+| Max power | 100mA, well inside the boost's range |
+| Endpoint | 0x81, interrupt IN |
+| Max packet | 6 bytes |
+| Interval | 10ms |
+
+So the component reads asynchronous status changes from one 6-byte interrupt
+endpoint, and fetches the HID report descriptor and the feature reports holding
+voltages and thresholds over control transfers on EP0.
+
+ESPHome prints `bInterfaceProtocol` under a label reading `bInterfaceClass`
+(`usbh_print_intf_desc()` passes the wrong field), so the logged
+`bInterfaceClass 0x0` is not the real class -- this device is HID, class 0x03.
+
 ## Hardware notes
 
 Both of these come from the CoreS3 having exactly one USB-C port, shared
