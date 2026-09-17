@@ -1,0 +1,98 @@
+# M5Stack StickS3 board package: PMIC, display, buttons.
+# Pin map taken from M5Unified and M5GFX, which are the only authoritative
+# source -- the board is too new for a PlatformIO definition or vendor ESPHome
+# support, so `variant` alone selects the target.
+#
+# Unlike the CoreS3 package there is no USB host power path here: on the Y
+# splitter the board sources no VBUS at all, so the boost, the IO expander and
+# the interlock that guards them are all unnecessary. See README.
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+# PSRAM is deliberately absent: the module has 8MB but sources disagree on quad
+# versus octal, and a wrong mode fails to boot. A 135x240 panel does not need
+# it. Enable it once the mode is confirmed on hardware.
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [m5pm1]
+
+i2c:
+  # Internal bus: the PMIC and the IMU live here.
+  - id: bsp_bus
+    sda: GPIO47
+    scl: GPIO48
+    scan: true
+  # Grove and HAT2 headers.
+  - id: ext_bus
+    sda: GPIO9
+    scl: GPIO10
+    scan: false
+
+# Gates the LCD rail on GPIO2. Without it the panel is simply dark, with no
+# error anywhere -- M5GFX does this inside board detection.
+m5pm1:
+  id: pmic
+  i2c_id: bsp_bus
+
+spi:
+  - id: lcd_bus
+    clk_pin: GPIO40
+    mosi_pin: GPIO39
+
+display:
+  - platform: mipi_spi
+    id: lcd
+    # ESPHome's T-DISPLAY model is this exact panel: ST7789V 135x240 with
+    # offsets 52/40 and inverted colours, matching M5GFX's own configuration.
+    model: T-DISPLAY
+    spi_id: lcd_bus
+    cs_pin: GPIO41
+    dc_pin: GPIO45
+    reset_pin: GPIO21
+    rotation: 90
+    update_interval: 1s
+
+output:
+  - platform: ledc
+    id: lcd_backlight_output
+    pin: GPIO38
+
+light:
+  - platform: monochromatic
+    id: lcd_backlight
+    name: "Backlight"
+    output: lcd_backlight_output
+    restore_mode: ALWAYS_ON
+    web_server:
+      sorting_group_id: group_board
+
+binary_sensor:
+  - platform: gpio
+    id: button_a
+    name: "Button A"
+    pin:
+      number: GPIO11
+      inverted: true
+    web_server:
+      sorting_group_id: group_board
+  - platform: gpio
+    id: button_b
+    name: "Button B"
+    pin:
+      number: GPIO12
+      inverted: true
+    web_server:
+      sorting_group_id: group_board
+  - platform: status
+    id: device_status
+    name: "Status"
+    web_server:
+      sorting_group_id: group_board

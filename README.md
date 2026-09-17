@@ -9,8 +9,30 @@ Stage 1 — in this repo now — is hardware bring-up. The UPS component follows
 
 | Path | Purpose |
 |---|---|
+| `common/ups-monitor.yaml` | Everything board-independent: USB host, `apc_ups`, all entities |
+| `apc-ups.yaml` | CoreS3 build: board package plus a 320x240 layout |
+| `apc-ups-stick.yaml` | StickS3 build: board package plus a 240x135 layout |
 | `boards/m5stack-cores3.yaml` | Board package: PMU rails, IO expander, display, touch, USB host power |
+| `boards/m5stick-s3.yaml` | Board package: PMIC, display, buttons -- no USB host power path |
 | `cores3-bringup.yaml` | Stage-1 test config: display, touch and PMU telemetry |
+
+A board config contributes its hardware and a display layout sized to its panel;
+everything else comes from the shared package, so an entity cannot exist on one
+board and be missing on the other.
+
+## Porting to another ESP32-S3 board
+
+The UPS side is board-independent: `apc_ups` reads the endpoint and the report
+layout from the device, so it needs no per-board changes. What a new board costs
+is its own package, and on the Y splitter topology it does not even need a VBUS
+path -- the splitter supplies the UPS, so the boost, the IO expander and the
+interlock guarding them are all CoreS3-specific.
+
+The StickS3 port is written and builds; it is untested pending hardware. Its one
+trap is that the M5PM1 PMIC gates the LCD rail on its GPIO2, so the panel stays
+dark with no error until `m5pm1` drives it -- the same shape of problem as the
+CoreS3's AXP2101 rails. ESP32 classic boards such as the StickC Plus2 cannot
+work at all: they have no USB OTG peripheral.
 
 ## Secrets
 

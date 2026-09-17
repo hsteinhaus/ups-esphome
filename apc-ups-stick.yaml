@@ -1,0 +1,63 @@
+# APC Back-UPS BX950MI monitor on the M5Stack StickS3.
+#
+# The board sources no VBUS: the USB-C Y splitter supplies both it and the UPS,
+# so none of the CoreS3's boost path exists here. USB serial is unavailable once
+# usb_host claims the OTG PHY; updates are OTA.
+
+substitutions:
+  name: apc-ups-stick
+
+esphome:
+  name: ${name}
+  friendly_name: APC UPS
+
+packages:
+  board: !include boards/m5stick-s3.yaml
+  monitor: !include common/ups-monitor.yaml
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 15
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 21
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 11
+
+display:
+  - id: !extend lcd
+    lambda: |-
+      // 240x135 fits four rows and a footer, so the UPS gets the rows and this
+      // board gets only the footer -- the same split as the CoreS3, minus the
+      // room to be generous about it.
+      const int FOOTER_Y = 116;
+      it.fill(Color::BLACK);
+
+      if (!id(ups_battery).has_state()) {
+        it.print(6, 6, id(font_title), Color(0xFF, 0xD0, 0x40), "Waiting for UPS");
+      } else {
+        const bool on_battery = id(ups_on_battery).state;
+        const bool low = id(ups_low_battery).state;
+        const auto status_color = low        ? Color(0xFF, 0x40, 0x40)
+                                  : on_battery ? Color(0xFF, 0xD0, 0x40)
+                                               : Color(0x40, 0xFF, 0x40);
+        it.printf(6, 2, id(font_title), status_color, "%s",
+                  low ? "LOW BATTERY" : (on_battery ? "ON BATTERY" : "ONLINE"));
+
+        if (id(ups_power).has_state()) {
+          it.printf(6, 30, id(font_body), Color::WHITE, "Load  %.0f %%   %.0f W",
+                    id(ups_load).state, id(ups_power).state);
+        } else {
+          it.printf(6, 30, id(font_body), Color::WHITE, "Load  %.0f %%", id(ups_load).state);
+        }
+        it.printf(6, 50, id(font_body), Color::WHITE, "Chg   %.0f %%   %.1f V",
+                  id(ups_battery).state, id(ups_battery_voltage).state);
+        it.printf(6, 70, id(font_body), Color::WHITE, "In    %.0f V", id(ups_input_voltage).state);
+        it.printf(6, 90, id(font_body), Color::WHITE, "Run   %.0f min", id(ups_runtime).state / 60.0f);
+      }
+
+      it.line(0, FOOTER_Y, it.get_width(), FOOTER_Y, Color(0x40, 0x40, 0x40));
+      it.printf(6, FOOTER_Y + 4, id(font_small), Color(0xA0, 0xA0, 0xA0), "%s",
+                id(wifi_ip).state.empty() ? "no wifi" : id(wifi_ip).state.c_str());
