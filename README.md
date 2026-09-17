@@ -39,10 +39,14 @@ The UPS is a pure 5V sink: it draws VBUS from whatever hosts it. Turning on the
 `USB Host 5V` switch enables the SY7088 boost (AW9523B P1_7) and then
 `USB_OTG_EN` (P0_5), so the CoreS3 drives 5V *out* of its USB-C port.
 
-**The board cannot be powered through that port while it does so.** Supply it
-from the internal LiPo or from 5V on the M-Bus / Grove header first. M5Unified
-guards this same case: with no battery and external 5V present, enabling the
-output cuts the board's own supply.
+**The board cannot be powered through that port while it does so**, and the UPS
+cannot make up for it: a UPS USB port is a device port, so it sinks VBUS and
+sources none. Power the CoreS3 separately.
+
+- **Bench:** run on the internal LiPo. M5Unified guards exactly this case --
+  with no battery and external 5V present, enabling the output cuts the board's
+  own supply -- so the battery is what makes bench testing safe.
+- **Permanent:** a PD splitter cable feeding the CoreS3 while it hosts the UPS.
 
 The switch defaults to off and never restores on, so a reboot cannot silently
 drop the board's power.
