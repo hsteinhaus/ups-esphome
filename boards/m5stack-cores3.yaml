@@ -1,0 +1,155 @@
+# M5Stack CoreS3 hardware bring-up: power rails, IO expander, display, touch.
+# Pin map per https://docs.m5stack.com/en/core/CoreS3
+# AW9523B bit assignments cross-checked against M5Unified Power_Class.cpp.
+
+esphome:
+  on_boot:
+    # Between axp2101 setup (DATA, 600) and display setup, so the panel and
+    # touch rails are live before either is initialised.
+    priority: 500
+    then:
+      - output.turn_on: rail_aldo1
+      - output.turn_on: rail_aldo2
+      - output.turn_on: rail_bldo1
+      - output.turn_on: rail_bldo2
+
+esp32:
+  variant: esp32s3
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: quad
+  speed: 80MHz
+
+external_components:
+  - source: github://m5stack/esphome-yaml/components
+    components: [axp2101, aw9523b]
+
+i2c:
+  - id: bsp_bus
+    sda: GPIO12
+    scl: GPIO11
+
+spi:
+  - id: lcd_bus
+    clk_pin: GPIO36
+    mosi_pin: GPIO37
+
+axp2101:
+  id: pmu
+  i2c_id: bsp_bus
+
+aw9523b:
+  id: expander
+  i2c_id: bsp_bus
+  # P0_5 (USB_OTG_EN) must actively drive high, so P0 cannot be open-drain.
+  p0_drive_mode: PUSH_PULL
+
+output:
+  - platform: axp2101
+    type: range
+    channel: DLDO1
+    id: lcd_backlight_output
+    min_voltage: 2600
+    max_voltage: 3300
+  - platform: axp2101
+    channel: ALDO1
+    id: rail_aldo1
+    voltage: 1800
+  - platform: axp2101
+    channel: ALDO2
+    id: rail_aldo2
+    voltage: 3300
+  - platform: axp2101
+    channel: BLDO1
+    id: rail_bldo1
+    voltage: 2800
+  - platform: axp2101
+    channel: BLDO2
+    id: rail_bldo2
+    voltage: 1500
+
+light:
+  - platform: monochromatic
+    id: lcd_backlight
+    name: "Backlight"
+    output: lcd_backlight_output
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 250ms
+
+display:
+  - platform: mipi_spi
+    id: lcd
+    model: M5CORE
+    spi_id: lcd_bus
+    dc_pin: GPIO35
+    cs_pin:
+      number: GPIO3
+      ignore_strapping_warning: true
+    reset_pin:
+      aw9523b_id: expander
+      number: 9 # P1_1
+    data_rate: 40MHz
+    invert_colors: true
+
+touchscreen:
+  - platform: ft63x6
+    id: touch
+    i2c_id: bsp_bus
+    reset_pin:
+      aw9523b_id: expander
+      number: 0 # P0_0
+    calibration:
+      x_min: 0
+      x_max: 320
+      y_min: 0
+      y_max: 240
+
+sensor:
+  - platform: axp2101
+    id: pmu_sensor
+    battery_level:
+      id: battery_level
+      name: "Battery Level"
+    battery_voltage:
+      name: "Battery Voltage"
+    axp_temperature:
+      name: "PMU Temperature"
+    battery_charging:
+      name: "Battery Charging"
+
+# USB-C host power. Turning this on makes the CoreS3 SOURCE 5V on its USB-C
+# port, so the board can no longer be powered through it -- see README.
+switch:
+  - platform: gpio
+    id: vbus_boost_en
+    pin:
+      aw9523b_id: expander
+      number: 15 # P1_7, SY7088 BOOST_EN
+    internal: true
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    id: usb_otg_en
+    pin:
+      aw9523b_id: expander
+      number: 5 # P0_5, USB_OTG_EN
+    internal: true
+    restore_mode: ALWAYS_OFF
+  - platform: template
+    id: usb_host_power
+    name: "USB Host 5V"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    # Boost before switch on, switch off before boost: a half-applied sequence
+    # never reports the output live while the converter is stopped.
+    turn_on_action:
+      - switch.turn_on: vbus_boost_en
+      - delay: 10ms
+      - switch.turn_on: usb_otg_en
+    turn_off_action:
+      - switch.turn_off: usb_otg_en
+      - delay: 10ms
+      - switch.turn_off: vbus_boost_en

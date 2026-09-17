@@ -1,0 +1,4 @@
+/.esphome/
+/work/
+secrets.yaml
+*.bin
