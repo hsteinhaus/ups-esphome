@@ -64,6 +64,10 @@ Worst-case detection is now `status_interval` even if no push ever arrives.
 Arriving pushes are logged as `push report 0x..` at DEBUG, which is how to tell
 the two paths apart.
 
+**Verified.** The endpoint delivers several reports a second -- `0x16`
+PresentStatus and `0x0C` RemainingCapacity -- arriving between poll ticks, and
+a mains cut is now reported almost immediately rather than on the next tick.
+
 ## Boot-loop guard
 
 Asserting the 5 V boost on a flat battery browns out the rail, and the board
@@ -72,8 +76,18 @@ sourcing VBUS also blocks charging on the same port. Observed once, with the
 battery drained flat while the board sourced VBUS to the UPS. `boost_boot_limit`
 consecutive boots that never reach `boost_settle_time` abandon the restore.
 
-**The board cannot charge while `USB Host 5V` is on.** The PD splitter is a
-requirement for the permanent install, not an optimisation.
+**The board cannot charge while `USB Host 5V` is on.** In the permanent
+configuration it has no battery at all, so it cannot source VBUS either: the
+interlock refuses while the port is supplied from outside, and `USB Host 5V` is
+inert there by design. It remains meaningful only for a battery-equipped bench
+board, or one fed through the M5Bus.
+
+## Permanent topology, confirmed
+
+CoreS3 batteryless on a USB-C Y splitter: the splitter supplies both the board
+and the UPS, the board sources nothing, and the UPS enumerates and pushes
+normally. The splitter feeding its peripheral leg was the open question; it
+does.
 
 ## Still open
 

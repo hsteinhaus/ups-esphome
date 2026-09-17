@@ -18,10 +18,16 @@ esphome:
         - output.turn_on: rail_aldo2
         - output.turn_on: rail_bldo1
         - output.turn_on: rail_bldo2
-    # A boot that survives this long was not a brownout, so the attempt counter
-    # starts again from zero and a manual turn-on stops being counted.
     - priority: -100
       then:
+        # Runs after every setup, so it is the last word on what the switch
+        # reports. A restore publishes its own state after the action has run,
+        # which would otherwise claim 5V that the interlock had just refused.
+        - switch.template.publish:
+            id: usb_host_power
+            state: !lambda "return id(vbus_boost_en).state && id(usb_otg_en).state;"
+        # A boot that survives this long was not a brownout, so the attempt
+        # counter starts again from zero and a manual turn-on stops counting.
         - delay: $boost_settle_time
         - lambda: |-
             id(boost_boot_attempts) = 0;
