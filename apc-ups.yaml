@@ -1,0 +1,104 @@
+# APC Back-UPS BX950MI monitor.
+#
+# The CoreS3 sources VBUS for the UPS, so it cannot be powered through its own
+# USB-C port -- see README. USB serial is unavailable once usb_host claims the
+# OTG PHY; updates are OTA.
+
+substitutions:
+  name: apc-ups
+
+esphome:
+  name: ${name}
+  friendly_name: APC UPS
+
+packages:
+  board: !include boards/m5stack-cores3.yaml
+
+logger:
+  # Per-tag levels may only be quieter than the global one, so the global stays
+  # VERBOSE (descriptor dumps need it) and the chatty tags are muted by name.
+  level: VERBOSE
+  logs:
+    i2c.idf: ERROR
+    spi_device: ERROR
+    FT63X6: WARN
+    touchscreen: WARN
+    display.mipi_spi: WARN
+    component: WARN
+    sensor: WARN
+    binary_sensor: WARN
+    text_sensor: WARN
+    uptime.sensor: WARN
+    wifi_info: WARN
+    api: WARN
+    web_server: ERROR
+    web_server_idf: ERROR
+    mdns: WARN
+    preferences: WARN
+    wifi: INFO
+    switch: INFO
+    template.switch: INFO
+    switch.gpio: INFO
+    light: WARN
+    axp2101: WARN
+  # The OTG peripheral owns the PHY, so there is no serial console to log to.
+  baud_rate: 0
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+  - platform: web_server
+
+web_server:
+  port: 80
+  version: 3
+  local: true
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+
+captive_portal:
+
+usb_host:
+  devices:
+    - id: apc_ups
+      vid: 0x051D # American Power Conversion
+      pid: 0x0002 # Back-UPS BX950MI
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 18
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 26
+
+display:
+  - id: !extend lcd
+    update_interval: 1s
+    lambda: |-
+      it.fill(Color::BLACK);
+      it.print(10, 8, id(font_title), Color(0x00, 0xC8, 0xFF), "APC Back-UPS");
+
+      it.printf(10, 52, id(font_body), Color::WHITE, "IP:  %s",
+                id(wifi_ip).state.empty() ? "connecting..." : id(wifi_ip).state.c_str());
+
+      bool vbus = id(usb_host_power).state;
+      it.printf(10, 86, id(font_body), vbus ? Color(0x40, 0xFF, 0x40) : Color(0xFF, 0x60, 0x60),
+                "VBUS 5V: %s", vbus ? "ON" : "OFF");
+
+      if (!vbus) {
+        it.print(10, 120, id(font_body), Color(0xFF, 0xD0, 0x40), "Enable 'USB Host 5V'");
+      }
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: wifi_ip
+      name: "IP Address"
