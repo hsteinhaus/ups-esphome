@@ -289,7 +289,9 @@ void APCUPSClient::start_interrupt_in_() {
       // CALLBACK CONTEXT: USB task.
       [this](const usb_host::TransferStatus &status) {
         if (status.success && status.data_len >= 2) {
-          ESP_LOGD(TAG, "push report 0x%02X (%u bytes)", status.data[0], status.data_len);
+          // VERBOSE, not DEBUG: this fires several times a second and drowns
+          // everything else. It is the proof the endpoint delivers, so it stays.
+          ESP_LOGV(TAG, "push report 0x%02X (%u bytes)", status.data[0], status.data_len);
           this->decode_report_(HID_PDC_INPUT, status.data[0], status.data + 1, status.data_len - 1);
         }
         // Re-arm at once rather than waiting for the next loop: a status change
