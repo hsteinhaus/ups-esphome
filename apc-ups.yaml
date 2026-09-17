@@ -58,6 +58,15 @@ web_server:
   port: 80
   version: 3
   local: true
+  # Without these every entity lands in one "Sensor and control" list, mixing
+  # the UPS's battery with the CoreS3's own.
+  sorting_groups:
+    - id: group_ups
+      name: "UPS"
+      sorting_weight: 10
+    - id: group_board
+      name: "CoreS3"
+      sorting_weight: 20
 
 wifi:
   ssid: !secret wifi_ssid
@@ -89,27 +98,122 @@ font:
   - file: "gfonts://Roboto"
     id: font_title
     size: 26
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 14
 
 display:
   - id: !extend lcd
     update_interval: 1s
     lambda: |-
+      // Upper two thirds are the UPS, the strip below the rule is this board.
+      // Keeping them apart stops the CoreS3's own battery being read as the
+      // UPS's at a glance.
+      const int FOOTER_Y = 186;
       it.fill(Color::BLACK);
-      it.print(10, 8, id(font_title), Color(0x00, 0xC8, 0xFF), "APC Back-UPS");
 
-      it.printf(10, 52, id(font_body), Color::WHITE, "IP:  %s",
-                id(wifi_ip).state.empty() ? "connecting..." : id(wifi_ip).state.c_str());
+      it.filled_rectangle(0, 0, it.get_width(), 30, Color(0x00, 0x2A, 0x42));
+      it.print(8, 2, id(font_title), Color(0x00, 0xC8, 0xFF), "APC Back-UPS");
 
-      bool vbus = id(usb_host_power).state;
-      it.printf(10, 86, id(font_body), vbus ? Color(0x40, 0xFF, 0x40) : Color(0xFF, 0x60, 0x60),
-                "VBUS 5V: %s", vbus ? "ON" : "OFF");
+      if (!id(usb_host_power).state) {
+        it.print(10, 52, id(font_title), Color(0xFF, 0x60, 0x60), "VBUS OFF");
+        it.print(10, 92, id(font_body), Color(0xFF, 0xD0, 0x40), "UPS unpowered - enable");
+        it.print(10, 116, id(font_body), Color(0xFF, 0xD0, 0x40), "'USB Host 5V'");
+      } else if (!id(ups_battery).has_state()) {
+        it.print(10, 52, id(font_title), Color(0xFF, 0xD0, 0x40), "Waiting for UPS");
+      } else {
+        const bool on_battery = id(ups_on_battery).state;
+        const bool low = id(ups_low_battery).state;
+        const auto status_color = low    ? Color(0xFF, 0x40, 0x40)
+                                  : on_battery ? Color(0xFF, 0xD0, 0x40)
+                                               : Color(0x40, 0xFF, 0x40);
+        it.printf(10, 40, id(font_title), status_color, "%s",
+                  low ? "LOW BATTERY" : (on_battery ? "ON BATTERY" : "ONLINE"));
 
-      if (!vbus) {
-        it.print(10, 120, id(font_body), Color(0xFF, 0xD0, 0x40), "Enable 'USB Host 5V'");
+        it.printf(10, 80, id(font_body), Color::WHITE, "Charge   %.0f %%", id(ups_battery).state);
+        it.printf(10, 104, id(font_body), Color::WHITE, "Load     %.0f %%", id(ups_load).state);
+        it.printf(10, 128, id(font_body), Color::WHITE, "Runtime  %.0f min", id(ups_runtime).state / 60.0f);
+        it.printf(170, 80, id(font_body), Color::WHITE, "In  %.0f V", id(ups_input_voltage).state);
+        it.printf(170, 104, id(font_body), Color::WHITE, "Bat %.1f V", id(ups_battery_voltage).state);
       }
+
+      it.line(0, FOOTER_Y, it.get_width(), FOOTER_Y, Color(0x40, 0x40, 0x40));
+      it.print(8, FOOTER_Y + 6, id(font_small), Color(0x60, 0x60, 0x60), "CoreS3");
+      it.printf(8, FOOTER_Y + 26, id(font_small), Color(0xA0, 0xA0, 0xA0), "Bat %.0f%%",
+                id(battery_level).has_state() ? id(battery_level).state : 0.0f);
+      it.printf(90, FOOTER_Y + 26, id(font_small), Color(0xA0, 0xA0, 0xA0), "%s",
+                id(wifi_ip).state.empty() ? "no wifi" : id(wifi_ip).state.c_str());
 
 text_sensor:
   - platform: wifi_info
     ip_address:
       id: wifi_ip
       name: "IP Address"
+      web_server:
+        sorting_group_id: group_board
+
+sensor:
+  - platform: apc_ups
+    battery_level:
+      name: "UPS Battery Level"
+      id: ups_battery
+      web_server:
+        sorting_group_id: group_ups
+    runtime:
+      name: "UPS Runtime"
+      id: ups_runtime
+      web_server:
+        sorting_group_id: group_ups
+    input_voltage:
+      name: "UPS Input Voltage"
+      id: ups_input_voltage
+      web_server:
+        sorting_group_id: group_ups
+    battery_voltage:
+      name: "UPS Battery Voltage"
+      id: ups_battery_voltage
+      web_server:
+        sorting_group_id: group_ups
+    load:
+      name: "UPS Load"
+      id: ups_load
+      web_server:
+        sorting_group_id: group_ups
+
+binary_sensor:
+  - platform: apc_ups
+    online:
+      name: "UPS Online"
+      id: ups_online
+      web_server:
+        sorting_group_id: group_ups
+    charging:
+      name: "UPS Charging"
+      web_server:
+        sorting_group_id: group_ups
+    discharging:
+      name: "UPS On Battery"
+      id: ups_on_battery
+      web_server:
+        sorting_group_id: group_ups
+    low_battery:
+      name: "UPS Low Battery"
+      id: ups_low_battery
+      web_server:
+        sorting_group_id: group_ups
+    replace_battery:
+      name: "UPS Replace Battery"
+      web_server:
+        sorting_group_id: group_ups
+    overload:
+      name: "UPS Overload"
+      web_server:
+        sorting_group_id: group_ups
+    shutdown_imminent:
+      name: "UPS Shutdown Imminent"
+      web_server:
+        sorting_group_id: group_ups
+    battery_present:
+      name: "UPS Battery Present"
+      web_server:
+        sorting_group_id: group_ups

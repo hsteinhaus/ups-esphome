@@ -31,6 +31,11 @@ web_server:
   version: 3
   # Assets are served from flash, so the UI works with no internet access.
   local: true
+  # The board package tags its entities with this group.
+  sorting_groups:
+    - id: group_board
+      name: "CoreS3"
+      sorting_weight: 20
 
 wifi:
   ssid: !secret wifi_ssid

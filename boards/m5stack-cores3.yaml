@@ -77,6 +77,8 @@ light:
     id: lcd_backlight
     name: "Backlight"
     output: lcd_backlight_output
+    web_server:
+      sorting_group_id: group_board
     restore_mode: RESTORE_DEFAULT_ON
     default_transition_length: 250ms
 
@@ -114,12 +116,23 @@ sensor:
     battery_level:
       id: battery_level
       name: "Battery Level"
+      web_server:
+        sorting_group_id: group_board
     battery_voltage:
+      id: battery_voltage
       name: "Battery Voltage"
+      web_server:
+        sorting_group_id: group_board
     axp_temperature:
+      id: pmu_temperature
       name: "PMU Temperature"
+      web_server:
+        sorting_group_id: group_board
     battery_charging:
+      id: battery_charging
       name: "Battery Charging"
+      web_server:
+        sorting_group_id: group_board
 
 binary_sensor:
   # Also pulls in the binary_sensor component, which the axp2101 above emits
@@ -127,7 +140,10 @@ binary_sensor:
   # binary_sensor platform somewhere, the build fails on a missing
   # binary_sensor.h -- see README, upstream fix pending.
   - platform: status
+    id: device_status
     name: "Status"
+    web_server:
+      sorting_group_id: group_board
 
 # USB-C host power. Turning this on makes the CoreS3 SOURCE 5V on its USB-C
 # port, so the board can no longer be powered through it -- see README.
@@ -157,6 +173,8 @@ switch:
     id: usb_host_power
     name: "USB Host 5V"
     optimistic: true
+    web_server:
+      sorting_group_id: group_board
     # Persists across reboots: on the UPS the board is unreachable, so a reboot
     # or OTA must bring VBUS back by itself rather than wait for a manual
     # toggle. Restoring re-runs turn_on_action, and the gpio switches above are
