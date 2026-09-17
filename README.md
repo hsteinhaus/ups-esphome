@@ -84,6 +84,44 @@ sources none. Power the CoreS3 separately.
 The switch defaults to off and never restores on, so a reboot cannot silently
 drop the board's power.
 
+### Sourcing VBUS needs three bits, not two
+
+`BOOST_EN` (AW9523B P1_7) and `USB_OTG_EN` (P0_5) alone leave VBUS at 0V.
+`BUS_OUT_EN` (P0_1) must be high too: while it is low the boost output is tied
+to the BUS *input* path and cannot pull VBUS up. Measured 0V with the first two,
+5.007V once the third joined them.
+
+M5Unified's `setUsbOutput()` sets only boost and OTG, because its board init
+raises `BUS_OUT_EN` separately -- so porting that one function gives a dead
+port. The `USB Host 5V` switch drives all three, and unwinds in reverse.
+
+Verified: six VBUS cycles across two runs, six enumerations, six clean
+detaches, no resets. Roughly 1.5s from VBUS to `New device`.
+
+### USB-C peripherals cannot be hosted
+
+The CoreS3 has no CC controller for source role -- it presents `Rd` and simply
+applies VBUS. USB-C devices never see `Rp`, so they never enable their data
+lines, whatever the voltage on VBUS. A USB-C stick, a tablet and a USB-C power
+meter all read as dead while VBUS was fine.
+
+Use a USB-C to USB-A adapter and a USB-A device. The UPS is unaffected: its
+USB-B port is reached by a plain A-to-B cable, with no CC anywhere.
+
+### Never source VBUS while external power is connected
+
+Enabling the boost with a charger on the Y-adapter's power leg puts both
+supplies on the same net. That produced repeated attach/detach churn that never
+occurs on battery. Pick one: the board powers the UPS, or external 5V powers
+everything and `USB Host 5V` stays off.
+
+### The AXP2101 cannot measure VBUS the board sources
+
+Status bit 0x00.5 and the VBUS ADC only see power arriving *from* the port.
+They read absent and full-scale-invalid while a meter showed 5.007V, then
+correctly reported `vbus_good=1, 4966mV` once an external supply was attached.
+Useful for detecting incoming power, useless for verifying our own output.
+
 ### Host mode costs the serial console
 
 The ESP32-S3 routes USB-OTG and USB-Serial-JTAG through one PHY on GPIO19/20.
