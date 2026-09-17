@@ -131,6 +131,8 @@ void APCUPSClient::on_connected() {
   this->metric_report_count_ = 0;
   this->constant_report_count_ = 0;
   this->interrupt_pending_ = false;
+  this->poll_in_flight_ = false;
+  this->cycle_len_ = 0;
   this->interrupt_ep_ = 0;
 
   if (!this->discover_hid_interface_())
@@ -158,6 +160,8 @@ void APCUPSClient::on_disconnected() {
   this->metric_report_count_ = 0;
   this->constant_report_count_ = 0;
   this->interrupt_pending_ = false;
+  this->poll_in_flight_ = false;
+  this->cycle_len_ = 0;
 
   if (this->interface_claimed_) {
     usb_host_endpoint_halt(this->device_handle_, this->interrupt_ep_);
@@ -275,10 +279,11 @@ void APCUPSClient::bind_fields_() {
 }
 
 void APCUPSClient::start_interrupt_in_() {
-  if (this->interrupt_ep_ == 0 || this->interrupt_pending_)
+  // Claim the subscription before submitting, so the USB task re-arming from a
+  // callback and the main loop recovering a lost one cannot both submit.
+  if (this->interrupt_ep_ == 0 || this->interrupt_pending_.exchange(true))
     return;
 
-  this->interrupt_pending_ = true;
   const bool submitted = this->transfer_in(
       this->interrupt_ep_,
       // CALLBACK CONTEXT: USB task.
@@ -309,6 +314,7 @@ bool APCUPSClient::constants_pending_() const {
   return false;
 }
 
+// CALLER CONTEXT: main loop only, like poll_next_ -- the cursor is theirs.
 void APCUPSClient::start_poll_cycle_(bool include_status, bool include_metrics) {
   auto append = [this](const uint8_t *ids, size_t count) {
     for (size_t i = 0; i < count && this->cycle_len_ < MAX_FEATURE_REPORTS; i++)
@@ -324,25 +330,26 @@ void APCUPSClient::start_poll_cycle_(bool include_status, bool include_metrics) 
     append(this->constant_report_ids_, this->constant_report_count_);
 
   this->cycle_cursor_ = 0;
-  this->poll_generation_++;
-  this->poll_next_(this->poll_generation_);
+  this->poll_next_();
 }
 
 // One transfer in flight at a time. Submitting a whole tier at once competes
 // with the interrupt endpoint for the same transfer pool, and the endpoint
 // loses its subscription for good if its resubmit is the one that is refused.
-void APCUPSClient::poll_next_(uint8_t generation) {
-  if (this->cycle_cursor_ >= this->cycle_len_)
+void APCUPSClient::poll_next_() {
+  if (this->cycle_cursor_ >= this->cycle_len_ || this->poll_in_flight_)
     return;
 
   const uint8_t report_id = this->cycle_ids_[this->cycle_cursor_++];
   const uint8_t type = usb_host::USB_DIR_IN | usb_host::USB_TYPE_CLASS | usb_host::USB_RECIP_INTERFACE;
   const std::vector<uint8_t> read_buffer(REPORT_READ_LEN);
 
+  this->poll_in_flight_ = true;
   const bool submitted = this->control_transfer(
       type, REQ_GET_REPORT, REPORT_TYPE_FEATURE | report_id, this->hid_interface_,
-      // CALLBACK CONTEXT: USB task.
-      [this, report_id, generation](const usb_host::TransferStatus &status) {
+      // CALLBACK CONTEXT: USB task. It clears the flag and nothing else; the
+      // main loop owns the cursor, so a cycle replaced mid-flight stays sane.
+      [this, report_id](const usb_host::TransferStatus &status) {
         if (status.success && status.data_len > SETUP_PACKET_SIZE) {
           const uint8_t *body = status.data + SETUP_PACKET_SIZE;
           size_t body_len = status.data_len - SETUP_PACKET_SIZE;
@@ -354,17 +361,17 @@ void APCUPSClient::poll_next_(uint8_t generation) {
           }
           this->decode_report_(HID_PDC_FEATURE, report_id, body, body_len);
         }
-        // A cycle the timer already replaced must not chain on top of its
-        // successor and poll every report twice.
-        if (generation == this->poll_generation_)
-          this->poll_next_(generation);
+        this->poll_in_flight_ = false;
       },
       read_buffer);
 
-  // No callback follows a rejected submit, so this cycle ends here; the next
-  // tick starts a fresh one, which is the recovery path.
-  if (!submitted)
+  // No callback follows a rejected submit, so release the slot here; the next
+  // loop iteration retries the same report.
+  if (!submitted) {
+    this->poll_in_flight_ = false;
+    this->cycle_cursor_--;
     ESP_LOGW(TAG, "could not poll report 0x%02X", report_id);
+  }
 }
 
 void APCUPSClient::decode_report_(uint8_t report_type, uint8_t report_id, const uint8_t *payload, size_t len) {
@@ -436,6 +443,9 @@ void APCUPSClient::loop() {
     // Recovers a subscription lost to a refused submit; a no-op while one is
     // outstanding, which is almost always.
     this->start_interrupt_in_();
+
+    // Advance a cycle whose previous transfer has landed.
+    this->poll_next_();
 
     const bool status_due = now - this->last_status_poll_ >= this->status_interval_;
     const bool metrics_due = now - this->last_poll_ >= this->poll_interval_;

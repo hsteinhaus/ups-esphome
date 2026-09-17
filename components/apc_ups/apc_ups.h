@@ -5,6 +5,8 @@
 #if defined(USE_ESP32_VARIANT_ESP32P4) || defined(USE_ESP32_VARIANT_ESP32S2) || defined(USE_ESP32_VARIANT_ESP32S3) || \
     defined(USE_ESP32_VARIANT_ESP32S31) || defined(USE_ESP32_VARIANT_ESP32H4)
 
+#include <atomic>
+
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/usb_host/usb_host.h"
@@ -65,7 +67,7 @@ class APCUPSClient : public usb_host::USBClient {
   void bind_fields_();
   void start_interrupt_in_();
   void start_poll_cycle_(bool include_status, bool include_metrics);
-  void poll_next_(uint8_t generation);
+  void poll_next_();
   bool constants_pending_() const;
   void decode_report_(uint8_t report_type, uint8_t report_id, const uint8_t *payload, size_t len);
   void log_next_fields_();
@@ -104,11 +106,12 @@ class APCUPSClient : public usb_host::USBClient {
   size_t constant_report_count_{0};
 
   // One cycle's worth of report IDs, assembled from the tiers that are due.
+  // Only the main loop advances the cursor; the transfer callback just clears
+  // poll_in_flight_, so a cycle replaced mid-flight cannot lose its place.
   uint8_t cycle_ids_[MAX_FEATURE_REPORTS]{};
   size_t cycle_len_{0};
   size_t cycle_cursor_{0};
-  // Lets a callback tell whether the cycle it belongs to is still current.
-  volatile uint8_t poll_generation_{0};
+  std::atomic<bool> poll_in_flight_{false};
 
   // The interrupt endpoint, read from the configuration descriptor. A hardcoded
   // length that is not a multiple of wMaxPacketSize is rejected by the host
@@ -116,7 +119,9 @@ class APCUPSClient : public usb_host::USBClient {
   uint8_t hid_interface_{0};
   uint8_t interrupt_ep_{0};
   uint16_t interrupt_mps_{0};
-  volatile bool interrupt_pending_{false};
+  // Claimed by exchange: the USB task re-arms from the transfer callback and
+  // the main loop recovers a lost subscription, and both must not submit.
+  std::atomic<bool> interrupt_pending_{false};
 
   float last_load_{NAN};
   float last_nominal_power_{NAN};
