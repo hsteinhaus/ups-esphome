@@ -6,7 +6,7 @@
 # Usage: tools/cores3.sh {upload|logs|run} [config.yaml]
 set -euo pipefail
 
-DEVICE_ID="usb-Espressif_USB_JTAG_serial_debug_unit_24:58:7C:E9:32:48-if00"
+DEVICE_ID="usb-Espressif_USB_JTAG_serial_debug_unit_24:58:7C:E9:3A:54-if00"
 DEVICE="/dev/serial/by-id/${DEVICE_ID}"
 
 if [[ $# -lt 1 ]]; then
