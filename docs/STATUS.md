@@ -7,7 +7,7 @@ hardware, not inference.
 ## Where things are
 
 - Repo: `https://github.com/hsteinhaus/apc-esphome` (private), `master` pushed.
-- Device: `10.22.10.62`, hostname `apc-ups`, running `apc-ups.yaml`.
+- Device: `10.22.10.64`, hostname `apc-ups`, running `apc-ups.yaml`.
 - Toolchain: `work/venv/bin/esphome` (2026.6.5), gitignored, on the mount.
 - The secrets file is user-owned. Never read, write or echo it.
 
@@ -15,7 +15,7 @@ hardware, not inference.
 
 ```sh
 work/venv/bin/esphome compile apc-ups.yaml
-work/venv/bin/esphome upload apc-ups.yaml --device 10.22.10.62   # OTA
+work/venv/bin/esphome upload apc-ups.yaml --device 10.22.10.64   # OTA
 tools/cores3.sh upload apc-ups.yaml                              # USB, by-id
 ```
 
