@@ -208,7 +208,7 @@ def verify(config, host):
     entities = {
         "status binary sensor": f"/{STATUS_ENTITY}",
         "backlight (display stack built)": "/light/backlight",
-        "UPS load sensor (apc_ups wired)": "/sensor/ups_load",
+        "UPS load sensor (component wired)": "/sensor/ups_load",
     }
     for label, path in entities.items():
         results.append((label, probe(host, path) is not None))

@@ -1,0 +1,79 @@
+# Megatec/Q* UPS monitor on a second M5Stack StickS3.
+#
+# The UPS presents a Cypress HID-to-serial bridge (0665:5161), not a HID power
+# device, so this shares the board and the deploy tool with apc-ups-stick.yaml
+# but none of the HID descriptor parsing.
+#
+# Written against the protocol rather than against the device: the first build
+# ran before the UPS was ever attached. qx_ups logs every command and reply at
+# VERBOSE, which is how the remaining unknowns get settled.
+
+substitutions:
+  name: qx-ups-stick
+
+esphome:
+  name: ${name}
+  friendly_name: Megatec UPS
+
+packages:
+  board: !include boards/m5stick-s3.yaml
+  monitor: !include common/qx-monitor.yaml
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 15
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 19
+  - file: "gfonts://Roboto"
+    id: font_huge
+    size: 38
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 11
+
+display:
+  - id: !extend lcd
+    lambda: |-
+      // Same 240x135 layout as the APC stick, with the one difference the
+      // protocol forces: Megatec reports no runtime, so the bottom line
+      // carries battery voltage and temperature instead of minutes left.
+      it.fill(Color::BLACK);
+
+      if (!id(ups_input_voltage).has_state()) {
+        it.print(8, 46, id(font_title), Color(0xFF, 0xD0, 0x40), "Waiting for UPS");
+        return;
+      }
+
+      const bool on_battery = id(ups_on_battery).state;
+      const bool low = id(ups_low_battery).state;
+      const auto accent = low        ? Color(0xFF, 0x40, 0x40)
+                          : on_battery ? Color(0xFF, 0xD0, 0x40)
+                                       : Color(0x40, 0xC0, 0x60);
+
+      it.filled_rectangle(0, 0, it.get_width(), 26, accent);
+      it.printf(7, 1, id(font_title), Color::BLACK, "%s",
+                low ? "LOW BATTERY" : (on_battery ? "ON BATTERY" : "ONLINE"));
+      if (id(ups_battery).has_state()) {
+        it.printf(it.get_width() - 7, 4, id(font_small), Color::BLACK, TextAlign::TOP_RIGHT, "%.0f%%",
+                  id(ups_battery).state);
+      }
+
+      // Watts need a plate rating the protocol does not carry, so load is the
+      // headline until nominal_power is set in common/qx-monitor.yaml.
+      if (id(ups_power).has_state()) {
+        it.printf(7, 30, id(font_huge), Color::WHITE, "%.0f", id(ups_power).state);
+        it.print(110, 54, id(font_body), Color(0xA0, 0xA0, 0xA0), "W");
+      } else {
+        it.printf(7, 30, id(font_huge), Color::WHITE, "%.0f%%", id(ups_load).state);
+      }
+
+      it.printf(150, 32, id(font_body), Color::WHITE, "%.0f V", id(ups_input_voltage).state);
+      it.printf(150, 52, id(font_body), Color(0xA0, 0xA0, 0xA0), "%.0f %%", id(ups_load).state);
+
+      it.printf(7, 82, id(font_body), on_battery ? accent : Color(0xA0, 0xA0, 0xA0), "%.2f V  %.0f C",
+                id(ups_battery_voltage).state, id(ups_temperature).state);
+
+      it.printf(7, 110, id(font_small), Color(0x70, 0x70, 0x70), "%s",
+                id(wifi_ip).state.empty() ? "no wifi" : id(wifi_ip).state.c_str());
