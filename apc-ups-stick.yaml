@@ -21,7 +21,11 @@ font:
     size: 15
   - file: "gfonts://Roboto"
     id: font_title
-    size: 21
+    size: 19
+  # The one value worth reading from across the room.
+  - file: "gfonts://Roboto"
+    id: font_huge
+    size: 38
   - file: "gfonts://Roboto"
     id: font_small
     size: 11
@@ -29,35 +33,43 @@ font:
 display:
   - id: !extend lcd
     lambda: |-
-      // 240x135 fits four rows and a footer, so the UPS gets the rows and this
-      // board gets only the footer -- the same split as the CoreS3, minus the
-      // room to be generous about it.
-      const int FOOTER_Y = 116;
+      // 240x135 is a sixth of the CoreS3's area, so this is not that layout
+      // made smaller: one number carries the display and the rest supports it.
+      // Battery voltage and the per-cell detail live in the web UI.
       it.fill(Color::BLACK);
 
       if (!id(ups_battery).has_state()) {
-        it.print(6, 6, id(font_title), Color(0xFF, 0xD0, 0x40), "Waiting for UPS");
-      } else {
-        const bool on_battery = id(ups_on_battery).state;
-        const bool low = id(ups_low_battery).state;
-        const auto status_color = low        ? Color(0xFF, 0x40, 0x40)
-                                  : on_battery ? Color(0xFF, 0xD0, 0x40)
-                                               : Color(0x40, 0xFF, 0x40);
-        it.printf(6, 2, id(font_title), status_color, "%s",
-                  low ? "LOW BATTERY" : (on_battery ? "ON BATTERY" : "ONLINE"));
-
-        if (id(ups_power).has_state()) {
-          it.printf(6, 30, id(font_body), Color::WHITE, "Load  %.0f %%   %.0f W",
-                    id(ups_load).state, id(ups_power).state);
-        } else {
-          it.printf(6, 30, id(font_body), Color::WHITE, "Load  %.0f %%", id(ups_load).state);
-        }
-        it.printf(6, 50, id(font_body), Color::WHITE, "Chg   %.0f %%   %.1f V",
-                  id(ups_battery).state, id(ups_battery_voltage).state);
-        it.printf(6, 70, id(font_body), Color::WHITE, "In    %.0f V", id(ups_input_voltage).state);
-        it.printf(6, 90, id(font_body), Color::WHITE, "Run   %.0f min", id(ups_runtime).state / 60.0f);
+        it.print(8, 46, id(font_title), Color(0xFF, 0xD0, 0x40), "Waiting for UPS");
+        return;
       }
 
-      it.line(0, FOOTER_Y, it.get_width(), FOOTER_Y, Color(0x40, 0x40, 0x40));
-      it.printf(6, FOOTER_Y + 4, id(font_small), Color(0xA0, 0xA0, 0xA0), "%s",
+      const bool on_battery = id(ups_on_battery).state;
+      const bool low = id(ups_low_battery).state;
+      const auto accent = low        ? Color(0xFF, 0x40, 0x40)
+                          : on_battery ? Color(0xFF, 0xD0, 0x40)
+                                       : Color(0x40, 0xC0, 0x60);
+
+      // A filled bar reads as a state at a glance, where coloured text does not.
+      it.filled_rectangle(0, 0, it.get_width(), 26, accent);
+      it.printf(7, 1, id(font_title), Color::BLACK, "%s",
+                low ? "LOW BATTERY" : (on_battery ? "ON BATTERY" : "ONLINE"));
+      it.printf(it.get_width() - 7, 4, id(font_small), Color::BLACK, TextAlign::TOP_RIGHT, "%.0f%%",
+                id(ups_battery).state);
+
+      if (id(ups_power).has_state()) {
+        it.printf(7, 30, id(font_huge), Color::WHITE, "%.0f", id(ups_power).state);
+        it.print(110, 54, id(font_body), Color(0xA0, 0xA0, 0xA0), "W");
+      } else {
+        it.printf(7, 30, id(font_huge), Color::WHITE, "%.0f%%", id(ups_load).state);
+      }
+
+      // Right column: the two numbers that explain the big one.
+      it.printf(150, 32, id(font_body), Color::WHITE, "%.0f V", id(ups_input_voltage).state);
+      it.printf(150, 52, id(font_body), Color(0xA0, 0xA0, 0xA0), "%.0f %%", id(ups_load).state);
+
+      // Runtime matters most on battery, so it is the one line that changes tone.
+      it.printf(7, 82, id(font_body), on_battery ? accent : Color(0xA0, 0xA0, 0xA0), "%.0f min left",
+                id(ups_runtime).state / 60.0f);
+
+      it.printf(7, 110, id(font_small), Color(0x70, 0x70, 0x70), "%s",
                 id(wifi_ip).state.empty() ? "no wifi" : id(wifi_ip).state.c_str());
