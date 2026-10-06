@@ -82,6 +82,13 @@ text_sensor:
       name: "IP Address"
       web_server:
         sorting_group_id: group_board
+    # Read back by tools/sticks3_deploy.py to prove the host it verified is
+    # the chip it flashed. Two boards running sibling configs answer the same
+    # entity paths, so nothing else distinguishes them.
+    mac_address:
+      name: "MAC Address"
+      web_server:
+        sorting_group_id: group_board
   - platform: qx_ups
     manufacturer:
       name: "UPS Manufacturer"

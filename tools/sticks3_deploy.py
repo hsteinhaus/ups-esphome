@@ -36,9 +36,11 @@ APP_MATCH = "StickS3"
 PROMPT = b">>>"
 ROM_WAIT = 120
 ESPHOME = "work/venv/bin/esphome"
+ESPTOOL = "work/venv/bin/esptool"
 # Keyed by entity NAME ("Status"), not by the YAML id -- the two differ, and
 # using the id matches nothing, which reads exactly like an absent device.
 STATUS_ENTITY = "binary_sensor/status"
+MAC_ENTITY = "text_sensor/mac_address"
 
 
 def log(msg):
@@ -94,6 +96,14 @@ def enter_download_mode(port):
     return None
 
 
+def read_mac(port):
+    """The flashed chip's MAC, read without resetting it out of download mode."""
+    out = subprocess.run([ESPTOOL, "--port", port, "--after", "no-reset", "read-mac"],
+                         capture_output=True, text=True)
+    found = re.search(r"MAC:\s*((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})", out.stdout + out.stderr)
+    return found.group(1).lower() if found else None
+
+
 def flash(config, timeout, allow_reset):
     if rom := (rom_ports() or [None])[0]:
         log(f"already in download mode at {rom}")
@@ -101,30 +111,33 @@ def flash(config, timeout, allow_reset):
         log(f"waiting up to {timeout:.0f}s for a port")
         app = wait_until(lambda: ports(APP_MATCH), timeout)
         if app is None:
-            return "no port appeared (single click powers it on, long press enters download mode)"
+            return "no port appeared (single click powers it on, long press enters download mode)", None
         log(f"found {app}")
         if not allow_reset:
-            return "only the UiFlow2 port is present and resets are disabled"
+            return "only the UiFlow2 port is present and resets are disabled", None
         if problem := enter_download_mode(app):
-            return f"{problem}; board left on the bus"
+            return f"{problem}; board left on the bus", None
         rom = wait_until(rom_ports, ROM_WAIT, settle=1.0)
         if rom is None:
-            return f"no port within {ROM_WAIT}s of machine.bootloader(); long-press for download mode"
+            return f"no port within {ROM_WAIT}s of machine.bootloader(); long-press for download mode", None
         log(f"download mode at {rom}")
+
+    mac = read_mac(rom)
+    log(f"chip MAC {mac or 'unreadable'}")
 
     log("flashing")
     if subprocess.call([ESPHOME, "upload", config, "--device", rom]) != 0:
-        return "esphome upload failed"
+        return "esphome upload failed", None
 
     # machine.bootloader() sets a force-download flag that an ordinary reset
     # does not clear, so the board comes straight back to "waiting for
     # download" and never runs what was just written. A watchdog reset is the
     # documented way out on USB-Serial-JTAG parts.
     log("watchdog reset to leave download mode")
-    if subprocess.call(["work/venv/bin/esptool", "--port", rom,
+    if subprocess.call([ESPTOOL, "--port", rom,
                         "--after", "watchdog-reset", "run"]) != 0:
-        return "could not reset out of download mode"
-    return None
+        return "could not reset out of download mode", None
+    return None, mac
 
 
 # ------------------------------------------------------------ verification
@@ -164,26 +177,39 @@ def http_open(host):
         return None
 
 
-def find_device(subnet, name, timeout, identify=None):
+def mac_of(host):
+    reading = probe(host, f"/{MAC_ENTITY}")
+    return (reading or {}).get("value", "").lower() or None
+
+
+def find_device(subnet, name, timeout, identify=None, mac=None):
     """mDNS first, then a sweep -- a new MAC usually means a new lease.
 
-    Returns every ESPHome host found. Picking the first match once verified a
-    different board entirely and reported its missing component as a failure,
-    so the caller decides when there is more than one.
+    Picking the first match once verified a different board entirely, and
+    later passed every check against it: boards running sibling configs answer
+    the same entity paths, so a single candidate is no evidence it is the
+    right one. Given a MAC, only the board carrying it is ever returned.
     """
     deadline = time.monotonic() + timeout
     probe_path = f"/{identify}" if identify else f"/{STATUS_ENTITY}"
+
+    def matching(hosts):
+        # A board that has not joined yet is indistinguishable from one that
+        # never will, so keep sweeping until the flashed MAC itself answers
+        # rather than settling for whichever sibling board is already up.
+        return [h for h in hosts if mac_of(h) == mac] if mac else hosts
+
     while time.monotonic() < deadline:
         try:
             if host := socket.gethostbyname(f"{name}.local"):
-                if probe(host, probe_path) is not None:
+                if probe(host, probe_path) is not None and matching([host]):
                     return [host]
         except OSError:
             pass
         with ThreadPoolExecutor(max_workers=64) as pool:
             live = [h for h in pool.map(http_open, (f"{subnet}.{i}" for i in range(1, 255))) if h]
         # The web API keys entities by NAME, not by the YAML id.
-        if found := [h for h in live if probe(h, probe_path) is not None]:
+        if found := matching([h for h in live if probe(h, probe_path) is not None]):
             return found
         time.sleep(3)
     return []
@@ -238,8 +264,10 @@ def main():
     parser.add_argument("--identify", help="entity path unique to this board, e.g. binary_sensor/button_a")
     args = parser.parse_args()
 
+    mac = None
     if not args.skip_flash:
-        if problem := flash(args.config, args.timeout, not args.no_reset):
+        problem, mac = flash(args.config, args.timeout, not args.no_reset)
+        if problem:
             sys.exit(f"FLASH FAILED: {problem}")
         log("flash complete; waiting for the board to join")
 
@@ -247,16 +275,19 @@ def main():
     if args.host:
         host = args.host
     else:
-        hosts = find_device(args.subnet, name, 180, args.identify)
+        hosts = find_device(args.subnet, name, 180, args.identify, mac)
         if not hosts:
-            sys.exit(f"VERIFY FAILED: {name} never appeared on {args.subnet}.0/24")
+            sys.exit(
+                f"VERIFY FAILED: {name} never appeared on {args.subnet}.0/24"
+                + (f" reporting MAC {mac}" if mac else "")
+            )
         if len(hosts) > 1:
             sys.exit(
                 f"VERIFY FAILED: {len(hosts)} ESPHome hosts match ({', '.join(hosts)}). "
                 "Pass --identify <entity unique to this board> or --host"
             )
         host = hosts[0]
-    log(f"device at {host}")
+    log(f"device at {host}" + (f" (MAC {mac} confirmed)" if mac and not args.host else ""))
 
     results = verify(args.config, host)
     width = max(len(label) for label, _ in results)

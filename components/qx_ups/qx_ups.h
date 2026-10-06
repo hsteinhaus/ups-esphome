@@ -92,7 +92,7 @@ class QxUPSClient : public usb_host::USBClient {
   void start_interrupt_in_();
   void send_command_(Command cmd);
   void send_next_chunk_();
-  void on_reply_(const char *reply);
+  void on_reply_(Command answered, const char *reply);
   bool parse_status_(const char *reply);
   void parse_ratings_(const char *reply);
   void parse_identity_(const char *reply);
@@ -135,8 +135,13 @@ class QxUPSClient : public usb_host::USBClient {
   std::atomic<Command> in_flight_{CMD_NONE};
   uint32_t command_started_{0};
 
+  // Asked once each, and given up on: a UPS that does not implement them
+  // would otherwise be asked forever, and status would never get a turn.
+  static constexpr uint8_t MAX_QUERY_TRIES = 3;
   bool identity_pending_{true};
   bool ratings_pending_{true};
+  uint8_t identity_tries_{0};
+  uint8_t ratings_tries_{0};
   bool dialect_logged_{false};
 
   float nominal_power_{NAN};

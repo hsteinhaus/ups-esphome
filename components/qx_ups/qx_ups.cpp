@@ -1,5 +1,7 @@
 #include "qx_ups.h"
 
+#include "qx_protocol.h"
+
 #if defined(USE_ESP32_VARIANT_ESP32P4) || defined(USE_ESP32_VARIANT_ESP32S2) || defined(USE_ESP32_VARIANT_ESP32S3) || \
     defined(USE_ESP32_VARIANT_ESP32S31) || defined(USE_ESP32_VARIANT_ESP32H4)
 
@@ -40,6 +42,8 @@ void QxUPSClient::on_connected() {
   this->in_flight_ = CMD_NONE;
   this->identity_pending_ = true;
   this->ratings_pending_ = true;
+  this->identity_tries_ = 0;
+  this->ratings_tries_ = 0;
   this->dialect_logged_ = false;
 
   if (!this->discover_hid_interface_())
@@ -204,7 +208,7 @@ void QxUPSClient::loop() {
       ESP_LOGD(TAG, "dropped late reply: %s", this->rx_buf_);
     } else {
       ESP_LOGV(TAG, "%s -> %s (%ums)", COMMAND_TEXT[answered], this->rx_buf_, millis() - this->command_started_);
-      this->on_reply_(this->rx_buf_);
+      this->on_reply_(answered, this->rx_buf_);
     }
     // Safe here and nowhere else: reply_ready_ keeps the USB task off the
     // buffer until it is cleared, which is the last thing done.
@@ -217,64 +221,53 @@ void QxUPSClient::loop() {
     if (millis() - this->command_started_ > this->reply_timeout_) {
       ESP_LOGW(TAG, "no reply to %s within %ums", COMMAND_TEXT[waiting], this->reply_timeout_);
       this->in_flight_ = CMD_NONE;
+      if (waiting == CMD_IDENTITY && ++this->identity_tries_ >= MAX_QUERY_TRIES) {
+        ESP_LOGW(TAG, "giving up on I; this UPS does not report its identity");
+        this->identity_pending_ = false;
+      } else if (waiting == CMD_RATINGS && ++this->ratings_tries_ >= MAX_QUERY_TRIES) {
+        ESP_LOGW(TAG, "giving up on F; charge needs an explicit battery voltage range");
+        this->ratings_pending_ = false;
+      }
     }
     return;
   }
 
-  // Identity and ratings cannot change, so they are asked for until they
-  // arrive and then never again.
-  if (this->identity_pending_) {
+  // Status first, always: the nameplate queries are one-offs, and a UPS that
+  // answers them slowly or not at all must not delay a mains-loss reading.
+  // They fill the gap between status polls instead.
+  if (millis() - this->last_status_ >= this->status_interval_) {
+    this->last_status_ = millis();
+    this->send_command_(CMD_STATUS);
+  } else if (this->identity_pending_) {
     this->send_command_(CMD_IDENTITY);
   } else if (this->ratings_pending_) {
     this->send_command_(CMD_RATINGS);
-  } else if (millis() - this->last_status_ >= this->status_interval_) {
-    this->last_status_ = millis();
-    this->send_command_(CMD_STATUS);
   }
 }
 
-void QxUPSClient::on_reply_(const char *reply) {
-  switch (reply[0]) {
-    case '(':
-      if (!this->parse_status_(reply))
-        ESP_LOGW(TAG, "unparsed status reply: %s", reply);
-      return;
-    case '#':
-      // Both `F` and `I` answer with a leading '#'; they are told apart by
-      // which one is still outstanding, not by the reply itself.
-      if (this->ratings_pending_) {
-        this->parse_ratings_(reply + 1);
-      } else {
-        this->parse_identity_(reply + 1);
-      }
-      return;
-    default:
-      // A UPS that does not know a command answers with the command echoed or
-      // with nothing useful. Give up on it rather than asking forever.
-      ESP_LOGW(TAG, "unexpected reply: %s", reply);
-      if (this->identity_pending_) {
-        this->identity_pending_ = false;
-      } else if (this->ratings_pending_) {
-        this->ratings_pending_ = false;
-      }
+void QxUPSClient::on_reply_(Command answered, const char *reply) {
+  // Dispatch on what was asked, never on the reply: `F` and `I` both answer
+  // with a leading '#', so the text cannot tell them apart.
+  if (answered == CMD_STATUS) {
+    if (!this->parse_status_(reply))
+      ESP_LOGW(TAG, "unparsed status reply: %s", reply);
+    return;
+  }
+
+  // Asked once either way: a UPS that does not implement the command answers
+  // junk, and retrying it forever would starve the status poll.
+  if (answered == CMD_RATINGS) {
+    this->parse_ratings_(reply);
+    this->ratings_pending_ = false;
+  } else {
+    this->parse_identity_(reply);
+    this->identity_pending_ = false;
   }
 }
 
 bool QxUPSClient::parse_status_(const char *reply) {
-  // (MMM.M NNN.N PPP.P QQQ RR.R S.SS TT.T b7b6b5b4b3b2b1b0
-  float values[7];
-  const char *p = reply + 1;
-  for (float &value : values) {
-    char *end;
-    value = strtof(p, &end);
-    if (end == p)
-      return false;
-    p = end;
-  }
-
-  while (*p == ' ')
-    p++;
-  if (strlen(p) < 8)
+  QxStatus status;
+  if (!qx_parse_status(reply, &status))
     return false;
 
   if (!this->dialect_logged_) {
@@ -282,23 +275,23 @@ bool QxUPSClient::parse_status_(const char *reply) {
     this->dialect_logged_ = true;
   }
 
-  for (uint8_t i = 0; i < METRIC_TEMPERATURE + 1; i++)
-    this->publish_metric_(static_cast<Metric>(i), values[i]);
+  static_assert(static_cast<int>(QX_FIELD_COUNT) == static_cast<int>(METRIC_TEMPERATURE) + 1,
+                "Metric must open with the Q1 fields, in protocol order");
+  for (uint8_t i = 0; i < QX_FIELD_COUNT; i++)
+    this->publish_metric_(static_cast<Metric>(i), status.value[i]);
 
-  const bool utility_fail = p[0] == '1';
+  const bool utility_fail = status.bit[QX_UTILITY_FAIL];
   this->publish_flag_(FLAG_ONLINE, !utility_fail);
   this->publish_flag_(FLAG_ON_BATTERY, utility_fail);
-  this->publish_flag_(FLAG_LOW_BATTERY, p[1] == '1');
-  this->publish_flag_(FLAG_BOOST_BUCK, p[2] == '1');
-  this->publish_flag_(FLAG_UPS_FAILED, p[3] == '1');
-  // p[4] is the UPS type -- a nameplate property, not a state.
-  this->publish_flag_(FLAG_TEST_IN_PROGRESS, p[5] == '1');
-  this->publish_flag_(FLAG_SHUTDOWN_ACTIVE, p[6] == '1');
-  this->publish_flag_(FLAG_BEEPER_ON, p[7] == '1');
+  this->publish_flag_(FLAG_LOW_BATTERY, status.bit[QX_BATTERY_LOW]);
+  this->publish_flag_(FLAG_BOOST_BUCK, status.bit[QX_BOOST_BUCK]);
+  this->publish_flag_(FLAG_UPS_FAILED, status.bit[QX_UPS_FAILED]);
+  this->publish_flag_(FLAG_TEST_IN_PROGRESS, status.bit[QX_TEST_IN_PROGRESS]);
+  this->publish_flag_(FLAG_SHUTDOWN_ACTIVE, status.bit[QX_SHUTDOWN_ACTIVE]);
+  this->publish_flag_(FLAG_BEEPER_ON, status.bit[QX_BEEPER_ON]);
 
-  const float load = values[METRIC_LOAD];
   if (!std::isnan(this->nominal_power_))
-    this->publish_metric_(METRIC_POWER, load * this->nominal_power_ / 100.0f);
+    this->publish_metric_(METRIC_POWER, status.value[QX_LOAD] * this->nominal_power_ / 100.0f);
 
   float low = this->battery_low_v_;
   float high = this->battery_high_v_;
@@ -307,61 +300,47 @@ bool QxUPSClient::parse_status_(const char *reply) {
     high = this->rated_battery_v_ * BATTERY_FULL_RATIO;
   }
   if (!std::isnan(low) && !std::isnan(high) && high > low) {
-    const float charge = (values[METRIC_BATTERY_VOLTAGE] - low) / (high - low) * 100.0f;
+    const float charge = (status.value[QX_BATTERY_VOLTAGE] - low) / (high - low) * 100.0f;
     this->publish_metric_(METRIC_BATTERY_LEVEL, clamp(charge, 0.0f, 100.0f));
   }
   return true;
 }
 
 void QxUPSClient::parse_ratings_(const char *reply) {
-  // MMM.M QQQ SS.SS RR.R -- rated voltage, current, battery voltage, frequency
-  float values[4];
-  const char *p = reply;
-  for (float &value : values) {
-    char *end;
-    value = strtof(p, &end);
-    if (end == p) {
-      ESP_LOGW(TAG, "unparsed ratings reply: %s", reply);
-      this->ratings_pending_ = false;
-      return;
-    }
-    p = end;
+  QxRatings ratings;
+  if (!qx_parse_ratings(reply, &ratings)) {
+    ESP_LOGW(TAG, "unparsed ratings reply: %s", reply);
+    return;
   }
 
   // Some units report the pack voltage per cell. Only a plausible pack voltage
   // may size the charge estimate; a wrong one would read as a flat battery.
-  if (values[2] >= 6.0f && values[2] <= 300.0f) {
-    this->rated_battery_v_ = values[2];
+  if (ratings.battery_voltage >= 6.0f && ratings.battery_voltage <= 300.0f) {
+    this->rated_battery_v_ = ratings.battery_voltage;
   } else {
-    ESP_LOGW(TAG, "implausible rated battery voltage %.2f V, charge estimate needs an explicit range", values[2]);
+    ESP_LOGW(TAG, "implausible rated battery voltage %.2f V, charge estimate needs an explicit range",
+             ratings.battery_voltage);
   }
-  ESP_LOGI(TAG, "ratings: %.1f V, %.0f A, %.2f V battery, %.1f Hz", values[0], values[1], values[2], values[3]);
-  this->ratings_pending_ = false;
+  ESP_LOGI(TAG, "ratings: %.1f V, %.0f A, %.2f V battery, %.1f Hz", ratings.voltage, ratings.current,
+           ratings.battery_voltage, ratings.frequency);
 }
 
 void QxUPSClient::parse_identity_(const char *reply) {
-  // Company_Name___ UPS_Model_ Version___, space padded to 15/10/10 by the
-  // protocol, so fields are split on runs of spaces rather than single ones.
-  std::string text(reply);
-  const char *labels[TEXT_COUNT] = {"manufacturer", "model", "firmware"};
-  size_t pos = 0;
-  for (uint8_t i = 0; i < TEXT_COUNT; i++) {
-    while (pos < text.size() && text[pos] == ' ')
-      pos++;
-    size_t end = text.find("  ", pos);
-    if (end == std::string::npos)
-      end = text.size();
-    std::string field = text.substr(pos, end - pos);
-    while (!field.empty() && field.back() == ' ')
-      field.pop_back();
-    if (!field.empty()) {
-      ESP_LOGI(TAG, "%s: %s", labels[i], field.c_str());
-      if (this->text_sensors_[i] != nullptr)
-        this->text_sensors_[i]->publish_state(field);
-    }
-    pos = end;
+  QxIdentity identity;
+  if (!qx_parse_identity(reply, &identity)) {
+    ESP_LOGW(TAG, "unparsed identity reply: %s", reply);
+    return;
   }
-  this->identity_pending_ = false;
+
+  const char *value[TEXT_COUNT] = {identity.manufacturer, identity.model, identity.firmware};
+  const char *label[TEXT_COUNT] = {"manufacturer", "model", "firmware"};
+  for (uint8_t i = 0; i < TEXT_COUNT; i++) {
+    if (value[i][0] == '\0')
+      continue;
+    ESP_LOGI(TAG, "%s: %s", label[i], value[i]);
+    if (this->text_sensors_[i] != nullptr)
+      this->text_sensors_[i]->publish_state(value[i]);
+  }
 }
 
 void QxUPSClient::publish_metric_(Metric m, float value) {
