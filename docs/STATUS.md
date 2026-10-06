@@ -1,13 +1,18 @@
 # Project state
 
 Stage 1 (board bring-up), stage 2 (UPS monitoring) and stage 3 (the move to a
-StickS3) are complete and verified against the real BX950MI. Everything below is
-fact established on hardware, not inference.
+StickS3) are complete and verified against the real BX950MI. Stage 4, a second
+UPS speaking a different protocol, is built and running on a second StickS3 but
+has not yet met its UPS. Everything below is fact established on hardware
+unless it says otherwise.
 
 ## Where things are
 
 - Repo: `https://github.com/hsteinhaus/apc-esphome` (private), `master` pushed.
-- Device: `10.22.10.65`, hostname `apc-ups-stick`, running `apc-ups-stick.yaml`.
+- Device: `10.22.10.65`, MAC `ac:27:6e:d2:5b:b4`, hostname `apc-ups-stick`,
+  running `apc-ups-stick.yaml` against the BX950MI.
+- Device: `10.22.10.66`, MAC `14:c1:9f:d5:da:d8`, hostname `qx-ups-stick`,
+  running `qx-ups-stick.yaml`. No UPS attached yet.
   The CoreS3 was disconnected on 2026-10-06; `apc-ups.yaml` is kept working but
   is no longer deployed.
 - Toolchain: `work/venv/bin/esphome` (2026.6.5), gitignored, on the mount.
@@ -22,6 +27,20 @@ work/venv/bin/python tools/sticks3_deploy.py apc-ups-stick.yaml       # USB flas
 work/venv/bin/python tools/sticks3_deploy.py apc-ups-stick.yaml \
     --skip-flash --host 10.22.10.65                                   # verify only
 ```
+
+The second board is the same, with `qx-ups-stick.yaml` and `10.22.10.66`. Its
+parser has host-side tests that need no hardware:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Werror -o work/qx_protocol_test \
+    tools/qx_protocol_test.cpp components/qx_ups/qx_protocol.cpp
+work/qx_protocol_test
+```
+
+Adding a **new source file** to an external component needs a CMake
+reconfigure before it is compiled: `src/CMakeLists.txt` globs at configure
+time, so the file is copied into the build and then links as undefined.
+`touch .esphome/build/<name>/src/CMakeLists.txt` is enough.
 
 After a container restart `~/.platformio` is wiped and PlatformIO cannot rebuild
 its own environment, because this image has no `ensurepip`. Recreate it first,
@@ -43,13 +62,17 @@ boards.
 | File | Purpose |
 |---|---|
 | `common/ups-monitor.yaml` | Board-independent half: USB host, `apc_ups`, every entity |
+| `common/qx-monitor.yaml` | Board-independent half of the Megatec monitor |
 | `apc-ups-stick.yaml` | Deployed: StickS3 board package plus a 240x135 layout |
+| `qx-ups-stick.yaml` | Deployed on the second StickS3, awaiting its UPS |
 | `apc-ups.yaml` | CoreS3 build, kept working but not deployed |
 | `boards/m5stick-s3.yaml` | StickS3 package: PMIC, display, buttons; no VBUS path |
 | `boards/m5stack-cores3.yaml` | CoreS3 package: PMU rails, IO expander, USB host power |
 | `usb-host-probe.yaml` | Generic USB host testing, wildcard vid/pid, register dumpers |
 | `cores3-bringup.yaml` | Stage-1 hardware check |
-| `tools/sticks3_deploy.py` | Flash and verify the StickS3; see its docstring for the traps |
+| `tools/sticks3_deploy.py` | Flash and verify a StickS3; see its docstring for the traps |
+| `tools/qx_probe.py` | Host-side dialect probe for a Cypress-bridged UPS |
+| `tools/qx_protocol_test.cpp` | Host-side tests for the Megatec reply parser |
 
 ## Verified on hardware
 
@@ -138,11 +161,45 @@ Side button: single click powers on or resets, double click powers off, long
 press enters download mode with the green LED flashing. A board that is simply
 switched off looks exactly like one that has vanished from the bus.
 
+## Second UPS: Megatec/Q* behind a Cypress bridge
+
+`0665:5161` is a Cypress HID-to-serial bridge, not a HID power device. Its
+report descriptor describes an opaque byte pipe, so none of `apc_ups` applies
+above the transport. Commands go out as 8-byte HID output reports via
+SET_REPORT (`0x21 0x09 0x0200`), replies arrive on the interrupt IN endpoint in
+8-byte chunks and are assembled until a carriage return.
+
+**Why NUT is unreliable on this chip, and why this is not.** The bridge buffers
+eight input reports. NUT reads only when it wants a reply, so an unread one --
+after a timeout, or any unsolicited data -- stays queued and is read as the
+*next* command's answer. Every reply then arrives one command behind, silently,
+until the driver restarts; upstream patches it with a drain loop
+([PR #3720](https://github.com/networkupstools/nut/pull/3720)). Keeping the
+interrupt endpoint permanently armed avoids the state instead of correcting it:
+the buffer never fills, and a reply arriving after its command timed out is
+dropped, because nothing is outstanding to attribute it to.
+
+What the protocol does *not* carry: charge and runtime. Charge is estimated
+from battery voltage against the rating in the `F` reply, and runtime is not
+reported at all -- which is why the display's bottom line shows battery voltage
+and temperature rather than minutes left. Watts need a plate rating set in
+`common/qx-monitor.yaml`; until it is set, load percent is the headline.
+
+Written with no access to the device, so the parser is a standalone module with
+host-side tests, and every command and reply is logged at VERBOSE with its
+round-trip time. That log is how the remaining unknowns get settled.
+
 ## Still open
 
 1. **A mains-loss transition on the StickS3.** The push path is proven on it
    and the firmware is the one validated on the CoreS3, but the event itself
    has not been seen on this board.
+2. **The Megatec UPS has never been attached.** Everything about `qx_ups`
+   beyond the parser tests is written from the protocol. Once the stick is on
+   it, the log answers: does `Q1` get a reply at all, is the dialect plain
+   Megatec, what do `I` and `F` return, and what is the round trip.
+3. **`nominal_power` and the battery voltage range** for that UPS are unset, so
+   watts and charge are not published yet. Both come from the `I`/`F` replies.
 
 ## Upstream bugs found
 

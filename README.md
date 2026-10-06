@@ -1,17 +1,29 @@
 # apc-esphome
 
-ESPHome component to read an **APC Back-UPS BX950MI** (USB HID Power Device,
-`051d:0002`) from an **M5Stack CoreS3**, with status on the built-in display.
+ESPHome components to read a UPS over USB from an M5Stack board, with status on
+the built-in display. Two UPSes, and they share almost nothing above the wire:
 
-Stage 1 — in this repo now — is hardware bring-up. The UPS component follows.
+- **APC Back-UPS BX950MI** (`051d:0002`) is a real USB HID Power Device.
+  `apc_ups` parses its report descriptor at runtime and resolves every value by
+  HID usage path, so it never depends on a vendor's report layout.
+- A **Megatec/Q\* UPS behind a Cypress HID-to-serial bridge** (`0665:5161`) only
+  looks like a HID device. Its descriptor describes an opaque byte pipe, and the
+  UPS behind it answers ASCII commands. `qx_ups` tunnels those through 8-byte
+  HID reports.
+
+What they do share is the transport work underneath: endpoint discovery from the
+configuration descriptor, the interface claim ESPHome's `USBClient` omits, and a
+permanently armed interrupt endpoint.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `common/ups-monitor.yaml` | Everything board-independent: USB host, `apc_ups`, all entities |
+| `common/ups-monitor.yaml` | Board-independent half of the APC monitor: USB host, `apc_ups`, all entities |
+| `common/qx-monitor.yaml` | Board-independent half of the Megatec monitor: USB host, `qx_ups`, all entities |
 | `apc-ups.yaml` | CoreS3 build: board package plus a 320x240 layout |
 | `apc-ups-stick.yaml` | StickS3 build: board package plus a 240x135 layout |
+| `qx-ups-stick.yaml` | Second StickS3, Megatec UPS: board package plus a 240x135 layout |
 | `boards/m5stack-cores3.yaml` | Board package: PMU rails, IO expander, display, touch, USB host power |
 | `boards/m5stick-s3.yaml` | Board package: PMIC, display, buttons -- no USB host power path |
 | `cores3-bringup.yaml` | Stage-1 test config: display, touch and PMU telemetry |
@@ -63,6 +75,26 @@ renumber between boards and will happily flash the wrong target.
 The last command resets the board before reading. The ESP32-S3 console runs
 over USB-Serial-JTAG and does not re-attach after flashing, so a plain `logs`
 sits on a silent port while the board is running perfectly well.
+
+## Testing what the device cannot confirm
+
+`qx_ups` was written from the protocol, without access to the UPS. A wrong field
+order there yields plausible numbers rather than an error, so the parsing is a
+standalone module with host-side tests:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Werror -o work/qx_protocol_test \
+    tools/qx_protocol_test.cpp components/qx_ups/qx_protocol.cpp
+work/qx_protocol_test
+```
+
+They pin the field order, the latched fault voltage that looks interchangeable
+with the input voltage, and the truncated replies a desynced bridge delivers --
+which must fail to parse rather than read as data.
+
+`tools/qx_probe.py` answers the remaining question from the host the UPS is
+plugged into: which dialect it speaks. It sends status queries only and refuses
+anything that tests the battery or switches the load.
 
 ## Component sources
 
