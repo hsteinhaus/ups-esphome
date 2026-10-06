@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Reset the CoreS3 and stream its console from the first boot line.
 
 The ESP32-S3 routes its console through USB-Serial-JTAG. That link does not

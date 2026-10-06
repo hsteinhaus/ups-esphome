@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "qx_ups.h"
 
 #include "qx_protocol.h"
@@ -229,16 +230,19 @@ void QxUPSClient::loop() {
     return;
   }
 
-  // Status first, always: the nameplate queries are one-offs, and a UPS that
-  // answers them slowly or not at all must not delay a mains-loss reading.
-  // They fill the gap between status polls instead.
-  if (millis() - this->last_status_ >= this->status_interval_) {
-    this->last_status_ = millis();
-    this->send_command_(CMD_STATUS);
-  } else if (this->identity_pending_) {
+  // The nameplate goes first, and only at startup. Battery voltage cannot be
+  // scaled without the `F` rating, so a status poll answered before it would
+  // publish a single cell's voltage as though it were the whole pack. Both
+  // queries are bounded, so a UPS that ignores them costs seconds, not the
+  // status poll. Once they are done this branch never runs again, which is
+  // what lets status_interval sit below one round trip.
+  if (this->identity_pending_) {
     this->send_command_(CMD_IDENTITY);
   } else if (this->ratings_pending_) {
     this->send_command_(CMD_RATINGS);
+  } else if (millis() - this->last_status_ >= this->status_interval_) {
+    this->last_status_ = millis();
+    this->send_command_(CMD_STATUS);
   }
 }
 

@@ -1,4 +1,4 @@
-# apc-esphome
+# ups-esphome
 
 ESPHome components to read a UPS over USB from an M5Stack board, with status on
 the built-in display. Two UPSes, and they share almost nothing above the wire:
@@ -19,7 +19,7 @@ permanently armed interrupt endpoint.
 
 | Path | Purpose |
 |---|---|
-| `common/ups-monitor.yaml` | Board-independent half of the APC monitor: USB host, `apc_ups`, all entities |
+| `common/apc-monitor.yaml` | Board-independent half of the APC monitor: USB host, `apc_ups`, all entities |
 | `common/qx-monitor.yaml` | Board-independent half of the Megatec monitor: USB host, `qx_ups`, all entities |
 | `apc-ups.yaml` | CoreS3 build: board package plus a 320x240 layout |
 | `apc-ups-stick.yaml` | StickS3 build: board package plus a 240x135 layout |
@@ -242,3 +242,18 @@ Useful for detecting incoming power, useless for verifying our own output.
 The ESP32-S3 routes USB-OTG and USB-Serial-JTAG through one PHY on GPIO19/20.
 Once `usb_host` claims it, USB flashing and USB logging are gone — updates are
 OTA, with BOOT+RESET download mode as the recovery path.
+
+## Licence
+
+Copyright (C) 2026 Holger Steinhaus. Released under the **GNU General Public
+Licence, version 2** -- see `LICENSE`. Source files carry
+`SPDX-License-Identifier: GPL-2.0-only`.
+
+One exception: `components/apc_ups/hid_pdc.{c,h}` are vendored unmodified from
+[hms-homelab/hms-esp-apc](https://github.com/hms-homelab/hms-esp-apc) under the
+MIT licence (`components/apc_ups/hid_pdc.LICENSE`), which GPLv2 permits. They
+deliberately carry no SPDX marker, because they are kept byte-identical so
+upstream fixes can be applied by copying over them -- see `VENDOR.md`.
+
+Credentials are referenced through `!secret` and have never been committed;
+see the section above before building.

@@ -8,7 +8,7 @@ unless it says otherwise.
 
 ## Where things are
 
-- Repo: `https://github.com/hsteinhaus/apc-esphome` (private), `master` pushed.
+- Repo: `https://github.com/hsteinhaus/ups-esphome` (private), `master` pushed.
 - Device: `10.22.10.65`, MAC `ac:27:6e:d2:5b:b4`, hostname `apc-ups-stick`,
   running `apc-ups-stick.yaml` against the BX950MI.
 - Device: `10.22.10.66`, MAC `14:c1:9f:d5:da:d8`, hostname `qx-ups-stick`,
@@ -61,7 +61,7 @@ boards.
 
 | File | Purpose |
 |---|---|
-| `common/ups-monitor.yaml` | Board-independent half: USB host, `apc_ups`, every entity |
+| `common/apc-monitor.yaml` | Board-independent half of the APC monitor |
 | `common/qx-monitor.yaml` | Board-independent half of the Megatec monitor |
 | `apc-ups-stick.yaml` | Deployed: StickS3 board package plus a 240x135 layout |
 | `qx-ups-stick.yaml` | Deployed on the second StickS3, on the ABB PowerValue |

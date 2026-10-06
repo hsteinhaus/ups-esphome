@@ -71,6 +71,11 @@ usb_host:
 
 qx_ups:
   id: ups
+  # This UPS buffers brief switching interruptions, so the events worth seeing
+  # can be shorter than the poll. The protocol has no push and no event latch,
+  # and a Q1 round trip measures 350-405ms, so this is close to the floor: an
+  # interruption shorter than roughly half a second can still pass unseen.
+  status_interval: 500ms
   # Megatec reports load only as a percentage, so watts are load x this. The
   # board config sets it from the plate; see the comment there.
   nominal_power: ${ups_nominal_power}

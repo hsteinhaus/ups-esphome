@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // Host-side tests for the Megatec/Q* reply parser.
 //
 // The parser was written from the protocol, not from the device, so these

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
 # Flash or tail the CoreS3, addressing it only by its stable by-id path.
 # Kernel names (/dev/ttyACM*) renumber across replugs and would target
 # whichever board happens to hold that number.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "m5pm1.h"
 #include "esphome/core/log.h"
 

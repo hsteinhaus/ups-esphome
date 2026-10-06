@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Identify the protocol dialect of a Cypress-bridged (Megatec/Q*) UPS.
 
 Run this on the Linux host the UPS is plugged into, before writing any

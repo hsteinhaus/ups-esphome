@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Flash a StickS3 and prove the result, unattended.
 
 Flashing is only half of it: a board that takes the image and then fails to

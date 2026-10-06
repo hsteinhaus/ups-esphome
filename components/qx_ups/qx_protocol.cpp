@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "qx_protocol.h"
 
 #include <cmath>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "axp2101_vbus.h"
 #include "esphome/core/log.h"
 

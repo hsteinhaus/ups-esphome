@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 import esphome.codegen as cg
 from esphome.components import sensor
 import esphome.config_validation as cv

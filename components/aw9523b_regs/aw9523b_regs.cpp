@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include "aw9523b_regs.h"
 #include "esphome/core/log.h"
 
