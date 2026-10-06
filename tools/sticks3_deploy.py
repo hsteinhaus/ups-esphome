@@ -123,7 +123,11 @@ def flash(config, timeout, allow_reset):
         log(f"download mode at {rom}")
 
     mac = read_mac(rom)
-    log(f"chip MAC {mac or 'unreadable'}")
+    if mac:
+        log(f"chip MAC {mac}")
+    else:
+        log("WARNING: could not read the chip MAC; the board that answers "
+            "cannot be matched to the one being flashed")
 
     log("flashing")
     if subprocess.call([ESPHOME, "upload", config, "--device", rom]) != 0:
@@ -295,7 +299,12 @@ def main():
         print(f"  {'PASS' if ok else 'FAIL'}  {label:<{width}}", flush=True)
 
     failed = [label for label, ok in results if not ok]
-    print(f"\n{host}  {len(results) - len(failed)}/{len(results)} checks passed", flush=True)
+    # A pass against an unidentified board is not a pass, and saying so is the
+    # difference between a verdict and a guess.
+    identity = (f"MAC {mac} confirmed" if mac
+                else "IDENTITY UNCONFIRMED -- this may not be the board just flashed"
+                if not args.host else "identified by --host")
+    print(f"\n{host}  {len(results) - len(failed)}/{len(results)} checks passed  ({identity})", flush=True)
     sys.exit(1 if failed else 0)
 
 
