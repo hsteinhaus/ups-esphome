@@ -71,9 +71,9 @@ usb_host:
 
 qx_ups:
   id: ups
-  # Megatec reports load as a percentage of the plate rating, so watts are only
-  # as good as this number. Set it once the `I`/`F` replies name the model.
-  # nominal_power: 600
+  # Megatec reports load only as a percentage, so watts are load x this. The
+  # board config sets it from the plate; see the comment there.
+  nominal_power: ${ups_nominal_power}
 
 text_sensor:
   - platform: wifi_info
@@ -149,6 +149,18 @@ sensor:
     battery_level:
       name: "UPS Battery Level"
       id: ups_battery
+      web_server:
+        sorting_group_id: group_ups
+    rated_voltage:
+      name: "UPS Rated Voltage"
+      web_server:
+        sorting_group_id: group_ups
+    rated_current:
+      name: "UPS Rated Current"
+      web_server:
+        sorting_group_id: group_ups
+    rated_battery_voltage:
+      name: "UPS Rated Battery Voltage"
       web_server:
         sorting_group_id: group_ups
 

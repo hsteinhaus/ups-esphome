@@ -24,10 +24,6 @@ static constexpr uint16_t HID_REPORT_TYPE_OUTPUT = 0x0200;
 // The bridge moves exactly one 8-byte report at a time, in both directions.
 static constexpr size_t CHUNK = 8;
 
-// Ratios of the nominal pack voltage at which a Megatec UPS is empty and full.
-// The protocol reports no charge, so this is the only way to estimate one.
-static constexpr float BATTERY_EMPTY_RATIO = 10.0f / 12.0f;
-static constexpr float BATTERY_FULL_RATIO = 13.6f / 12.0f;
 
 static const char *const COMMAND_TEXT[] = {nullptr, "Q1", "F", "I"};
 
@@ -45,6 +41,7 @@ void QxUPSClient::on_connected() {
   this->identity_tries_ = 0;
   this->ratings_tries_ = 0;
   this->dialect_logged_ = false;
+  this->battery_scale_logged_ = false;
 
   if (!this->discover_hid_interface_())
     return;
@@ -277,6 +274,16 @@ bool QxUPSClient::parse_status_(const char *reply) {
 
   static_assert(static_cast<int>(QX_FIELD_COUNT) == static_cast<int>(METRIC_TEMPERATURE) + 1,
                 "Metric must open with the Q1 fields, in protocol order");
+
+  // 2.27 V means nothing to a reader; 27.2 V on a 24 V pack does.
+  const QxBattery battery = qx_scale_battery(status.value[QX_BATTERY_VOLTAGE], this->rated_battery_v_);
+  status.value[QX_BATTERY_VOLTAGE] = battery.voltage;
+  if (!this->battery_scale_logged_) {
+    ESP_LOGI(TAG, "battery reported %s; nominal %.1f V, reading %.2f V", battery.per_cell ? "per cell" : "per pack",
+             battery.nominal, battery.voltage);
+    this->battery_scale_logged_ = true;
+  }
+
   for (uint8_t i = 0; i < QX_FIELD_COUNT; i++)
     this->publish_metric_(static_cast<Metric>(i), status.value[i]);
 
@@ -293,16 +300,18 @@ bool QxUPSClient::parse_status_(const char *reply) {
   if (!std::isnan(this->nominal_power_))
     this->publish_metric_(METRIC_POWER, status.value[QX_LOAD] * this->nominal_power_ / 100.0f);
 
-  float low = this->battery_low_v_;
-  float high = this->battery_high_v_;
-  if ((std::isnan(low) || std::isnan(high)) && !std::isnan(this->rated_battery_v_)) {
-    low = this->rated_battery_v_ * BATTERY_EMPTY_RATIO;
-    high = this->rated_battery_v_ * BATTERY_FULL_RATIO;
+  // An explicit range in YAML overrides the estimate, for a pack whose
+  // chemistry or wear makes the conventional thresholds wrong.
+  float charge = NAN;
+  if (!std::isnan(this->battery_low_v_) && this->battery_high_v_ > this->battery_low_v_) {
+    charge = clamp((battery.voltage - this->battery_low_v_) /
+                       (this->battery_high_v_ - this->battery_low_v_) * 100.0f,
+                   0.0f, 100.0f);
+  } else {
+    charge = qx_charge_percent(battery.voltage, battery.nominal);
   }
-  if (!std::isnan(low) && !std::isnan(high) && high > low) {
-    const float charge = (status.value[QX_BATTERY_VOLTAGE] - low) / (high - low) * 100.0f;
-    this->publish_metric_(METRIC_BATTERY_LEVEL, clamp(charge, 0.0f, 100.0f));
-  }
+  if (!std::isnan(charge))
+    this->publish_metric_(METRIC_BATTERY_LEVEL, charge);
   return true;
 }
 
@@ -323,6 +332,11 @@ void QxUPSClient::parse_ratings_(const char *reply) {
   }
   ESP_LOGI(TAG, "ratings: %.1f V, %.0f A, %.2f V battery, %.1f Hz", ratings.voltage, ratings.current,
            ratings.battery_voltage, ratings.frequency);
+  // Published as well as logged: the exchange happens within a second of
+  // enumeration, long before a log client can attach to watch it.
+  this->publish_metric_(METRIC_RATED_VOLTAGE, ratings.voltage);
+  this->publish_metric_(METRIC_RATED_CURRENT, ratings.current);
+  this->publish_metric_(METRIC_RATED_BATTERY_VOLTAGE, ratings.battery_voltage);
 }
 
 void QxUPSClient::parse_identity_(const char *reply) {

@@ -1,9 +1,39 @@
 #include "qx_protocol.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
 namespace esphome::qx_ups {
+
+// No real battery pack sits below this, so a reading under it is one cell.
+static constexpr float MIN_PACK_VOLTAGE = 4.0f;
+static constexpr float CELL_NOMINAL_VOLTAGE = 2.0f;
+// Fractions of nominal at which a lead-acid pack is flat and fully charged:
+// the 10.0 V and 13.6 V that a 12 V pack is conventionally measured against.
+static constexpr float BATTERY_EMPTY_RATIO = 10.0f / 12.0f;
+static constexpr float BATTERY_FULL_RATIO = 13.6f / 12.0f;
+
+QxBattery qx_scale_battery(float reported, float rated_nominal) {
+  if (reported >= MIN_PACK_VOLTAGE)
+    return {reported, rated_nominal, false};
+
+  // Per cell. The rating says how many cells to multiply by; without one the
+  // reading stands as it is and charge is measured against a single cell.
+  const float cells = std::isnan(rated_nominal) ? 0.0f : roundf(rated_nominal / CELL_NOMINAL_VOLTAGE);
+  if (cells >= 1.0f)
+    return {reported * cells, rated_nominal, true};
+  return {reported, CELL_NOMINAL_VOLTAGE, true};
+}
+
+float qx_charge_percent(float voltage, float nominal) {
+  if (std::isnan(nominal) || nominal <= 0.0f)
+    return NAN;
+  const float low = nominal * BATTERY_EMPTY_RATIO;
+  const float high = nominal * BATTERY_FULL_RATIO;
+  const float charge = (voltage - low) / (high - low) * 100.0f;
+  return charge < 0.0f ? 0.0f : charge > 100.0f ? 100.0f : charge;
+}
 
 namespace {
 

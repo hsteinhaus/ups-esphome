@@ -26,6 +26,11 @@ enum Metric : uint8_t {
   // Derived: the Q1 reply carries neither of these.
   METRIC_POWER,
   METRIC_BATTERY_LEVEL,
+  // From the `F` reply, which is asked once. Diagnostic, but they are also
+  // how the nameplate gets read off a UPS whose model number says nothing.
+  METRIC_RATED_VOLTAGE,
+  METRIC_RATED_CURRENT,
+  METRIC_RATED_BATTERY_VOLTAGE,
   METRIC_COUNT,
 };
 
@@ -143,6 +148,7 @@ class QxUPSClient : public usb_host::USBClient {
   uint8_t identity_tries_{0};
   uint8_t ratings_tries_{0};
   bool dialect_logged_{false};
+  bool battery_scale_logged_{false};
 
   float nominal_power_{NAN};
   float battery_low_v_{NAN};

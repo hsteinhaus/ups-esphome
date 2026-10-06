@@ -3,12 +3,14 @@ from esphome.components import sensor
 import esphome.config_validation as cv
 from esphome.const import (
     DEVICE_CLASS_BATTERY,
+    DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_FREQUENCY,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_POWER_FACTOR,
     DEVICE_CLASS_TEMPERATURE,
     DEVICE_CLASS_VOLTAGE,
     STATE_CLASS_MEASUREMENT,
+    UNIT_AMPERE,
     UNIT_CELSIUS,
     UNIT_HERTZ,
     UNIT_PERCENT,
@@ -29,6 +31,9 @@ CONF_BATTERY_VOLTAGE = "battery_voltage"
 CONF_TEMPERATURE = "temperature"
 CONF_POWER = "power"
 CONF_BATTERY_LEVEL = "battery_level"
+CONF_RATED_VOLTAGE = "rated_voltage"
+CONF_RATED_CURRENT = "rated_current"
+CONF_RATED_BATTERY_VOLTAGE = "rated_battery_voltage"
 
 # Keys map to the Metric enum; every one but the last two comes straight out
 # of the Q1 reply, in the order the device sends them.
@@ -109,6 +114,35 @@ METRICS = {
             state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             icon="mdi:flash",
+        ),
+    ),
+    # The `F` reply, asked once. Diagnostic, but on a UPS whose model number
+    # says nothing these are the only nameplate available.
+    CONF_RATED_VOLTAGE: (
+        Metric.METRIC_RATED_VOLTAGE,
+        sensor.sensor_schema(
+            unit_of_measurement=UNIT_VOLT,
+            device_class=DEVICE_CLASS_VOLTAGE,
+            accuracy_decimals=1,
+            entity_category="diagnostic",
+        ),
+    ),
+    CONF_RATED_CURRENT: (
+        Metric.METRIC_RATED_CURRENT,
+        sensor.sensor_schema(
+            unit_of_measurement=UNIT_AMPERE,
+            device_class=DEVICE_CLASS_CURRENT,
+            accuracy_decimals=1,
+            entity_category="diagnostic",
+        ),
+    ),
+    CONF_RATED_BATTERY_VOLTAGE: (
+        Metric.METRIC_RATED_BATTERY_VOLTAGE,
+        sensor.sensor_schema(
+            unit_of_measurement=UNIT_VOLT,
+            device_class=DEVICE_CLASS_VOLTAGE,
+            accuracy_decimals=2,
+            entity_category="diagnostic",
         ),
     ),
     # Estimated from battery voltage: the protocol reports no charge.

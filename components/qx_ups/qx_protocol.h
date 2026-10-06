@@ -58,6 +58,22 @@ struct QxIdentity {
   char firmware[FIELD_SIZE];
 };
 
+// What the UPS reports as its battery voltage, resolved into a pack voltage.
+struct QxBattery {
+  float voltage;  // scaled to the whole pack
+  float nominal;  // what a charge estimate should measure against; may be NAN
+  bool per_cell;  // true when the device reported a single cell
+};
+
+// A Megatec UPS reports either the whole pack's voltage or a single cell's,
+// and nothing in the protocol says which. `rated_nominal` is the `F` reply's
+// battery rating, or NAN when the UPS never gave one.
+QxBattery qx_scale_battery(float reported, float rated_nominal);
+
+// Charge estimated from voltage, since the protocol carries none. NAN when
+// there is no nominal voltage to measure against.
+float qx_charge_percent(float voltage, float nominal);
+
 // Each returns false for a reply that is truncated, mistyped or missing its
 // leading marker. A partial reply must never parse: the bridge drops bytes
 // when it desyncs, and a half-read line would otherwise read as real data.

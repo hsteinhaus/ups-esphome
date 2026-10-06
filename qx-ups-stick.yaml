@@ -10,6 +10,11 @@
 
 substitutions:
   name: qx-ups-stick
+  # ABB PowerValue 11 RT G2 1kVA (model WPHVR1K0, firmware 01072.06, read from
+  # its own `I` reply): 1000 VA at power factor 0.9. The `F` reply agrees --
+  # 230 V, 4 A, 24 V battery. Load is a percentage, so watts are load x this.
+  ups_nominal_power: "900"
+
 
 esphome:
   name: ${name}
@@ -60,8 +65,8 @@ display:
                   id(ups_battery).state);
       }
 
-      // Watts need a plate rating the protocol does not carry, so load is the
-      // headline until nominal_power is set in common/qx-monitor.yaml.
+      // Watts are derived from load and the plate rating; load percent is the
+      // fallback if nominal_power is ever unset.
       if (id(ups_power).has_state()) {
         it.printf(7, 30, id(font_huge), Color::WHITE, "%.0f", id(ups_power).state);
         it.print(110, 54, id(font_body), Color(0xA0, 0xA0, 0xA0), "W");

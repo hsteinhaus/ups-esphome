@@ -12,7 +12,7 @@ unless it says otherwise.
 - Device: `10.22.10.65`, MAC `ac:27:6e:d2:5b:b4`, hostname `apc-ups-stick`,
   running `apc-ups-stick.yaml` against the BX950MI.
 - Device: `10.22.10.66`, MAC `14:c1:9f:d5:da:d8`, hostname `qx-ups-stick`,
-  running `qx-ups-stick.yaml`. No UPS attached yet.
+  running `qx-ups-stick.yaml` against an ABB PowerValue 11 RT G2 1 kVA.
   The CoreS3 was disconnected on 2026-10-06; `apc-ups.yaml` is kept working but
   is no longer deployed.
 - Toolchain: `work/venv/bin/esphome` (2026.6.5), gitignored, on the mount.
@@ -64,7 +64,7 @@ boards.
 | `common/ups-monitor.yaml` | Board-independent half: USB host, `apc_ups`, every entity |
 | `common/qx-monitor.yaml` | Board-independent half of the Megatec monitor |
 | `apc-ups-stick.yaml` | Deployed: StickS3 board package plus a 240x135 layout |
-| `qx-ups-stick.yaml` | Deployed on the second StickS3, awaiting its UPS |
+| `qx-ups-stick.yaml` | Deployed on the second StickS3, on the ABB PowerValue |
 | `apc-ups.yaml` | CoreS3 build, kept working but not deployed |
 | `boards/m5stick-s3.yaml` | StickS3 package: PMIC, display, buttons; no VBUS path |
 | `boards/m5stack-cores3.yaml` | CoreS3 package: PMU rails, IO expander, USB host power |
@@ -187,19 +187,46 @@ and temperature rather than minutes left. Watts need a plate rating set in
 
 Written with no access to the device, so the parser is a standalone module with
 host-side tests, and every command and reply is logged at VERBOSE with its
-round-trip time. That log is how the remaining unknowns get settled.
+round-trip time.
+
+### What the real device turned out to be
+
+Attached 2026-10-06. It is an **ABB PowerValue 11 RT G2, 1 kVA** -- an online
+double-conversion unit. Nothing on the USB id says so; the UPS named itself in
+its `I` reply, as `WPHVR1K0` / firmware `01072.06`. There is a NUT mailing-list
+thread for this exact model titled "blazer_usb works / nutdrv_qx iffy", which
+matches the reliability complaint that started this.
+
+Everything written blind worked unchanged on first contact. `Q1` parsed, the
+round trip is a steady **370-420 ms**, and no desync appeared across any run.
+
+Three things only the device could tell us:
+
+- **It reports battery voltage per cell, not per pack**: `2.27` against a 24 V
+  rating, which is one of twelve cells at float charge. Taken literally it read
+  as a flat battery -- 0 % on a healthy pack. The reading is now scaled by the
+  cell count the `F` rating implies, so it publishes 27.24 V and 100 %.
+- **The manufacturer field is blank.** That is the UPS, not the parser; model
+  and firmware come through from the same reply.
+- `F` answers `230.0 V, 4 A, 24.00 V battery, 50 Hz`. Those three are published
+  as diagnostic sensors, because the exchange happens within a second of
+  enumeration -- long before a log client can attach to watch it. That is the
+  only practical way to read them.
+
+`nominal_power` is set to **900 W** (1000 VA at power factor 0.9) in
+`qx-ups-stick.yaml`. Megatec reports load only as a percentage, so watts are
+load x that figure -- the same convention NUT and apcupsd use, and no better
+than the plate value it is given.
 
 ## Still open
 
 1. **A mains-loss transition on the StickS3.** The push path is proven on it
    and the firmware is the one validated on the CoreS3, but the event itself
    has not been seen on this board.
-2. **The Megatec UPS has never been attached.** Everything about `qx_ups`
-   beyond the parser tests is written from the protocol. Once the stick is on
-   it, the log answers: does `Q1` get a reply at all, is the dialect plain
-   Megatec, what do `I` and `F` return, and what is the round trip.
-3. **`nominal_power` and the battery voltage range** for that UPS are unset, so
-   watts and charge are not published yet. Both come from the `I`/`F` replies.
+2. **A mains-loss transition on the ABB.** Steady-state readings are all
+   confirmed against the device, but no transition has been observed: the
+   `utility fail` bit, the latched input fault voltage and the discharge curve
+   are still only as good as the protocol says.
 
 ## Upstream bugs found
 

@@ -112,6 +112,44 @@ static void test_identity_short() {
   check(!qx_parse_identity("ACME  SMART 700  1.2", &id), "identity without marker rejected");
 }
 
+static void test_battery_scaling() {
+  // The real device: an ABB PowerValue 11 RT G2 reports 2.27 V for a 24 V
+  // pack, which is one cell of twelve at float charge.
+  QxBattery b = qx_scale_battery(2.27f, 24.0f);
+  check(b.per_cell, "2.27 V against a 24 V rating is per cell");
+  check_near(b.voltage, 27.24f, "scaled to the pack");
+  check_near(b.nominal, 24.0f, "nominal stays the pack rating");
+
+  b = qx_scale_battery(2.27f, 12.0f);
+  check_near(b.voltage, 13.62f, "six cells for a 12 V pack");
+
+  b = qx_scale_battery(13.6f, 12.0f);
+  check(!b.per_cell, "13.6 V against a 12 V rating is the pack itself");
+  check_near(b.voltage, 13.6f, "pack voltage passes through");
+
+  // No `F` reply: the reading cannot be scaled, but charge must still work.
+  b = qx_scale_battery(2.27f, NAN);
+  check(b.per_cell, "a low reading is per cell even with no rating");
+  check_near(b.voltage, 2.27f, "unscaled without a cell count");
+  check_near(b.nominal, 2.0f, "charge falls back to one cell");
+
+  b = qx_scale_battery(27.2f, NAN);
+  check(!b.per_cell, "a pack-sized reading with no rating is a pack");
+  check(std::isnan(b.nominal), "no nominal without a rating");
+}
+
+static void test_charge_estimate() {
+  check_near(qx_charge_percent(13.6f, 12.0f), 100.0f, "float voltage reads full");
+  check_near(qx_charge_percent(10.0f, 12.0f), 0.0f, "10 V on a 12 V pack reads empty");
+  check_near(qx_charge_percent(27.24f, 24.0f), 100.0f, "the real pack reads full");
+  check_near(qx_charge_percent(23.6f, 24.0f), 50.0f, "midpoint of a 24 V pack (20.0-27.2 V)");
+  check_near(qx_charge_percent(5.0f, 12.0f), 0.0f, "below empty clamps, never negative");
+  check_near(qx_charge_percent(99.0f, 12.0f), 100.0f, "above full clamps");
+  // The bug this replaces: a per-cell reading against a pack nominal read 0%
+  // on a perfectly healthy battery.
+  check(std::isnan(qx_charge_percent(13.6f, NAN)), "no nominal yields no estimate");
+}
+
 int main() {
   test_status_fields();
   test_status_on_battery();
@@ -120,6 +158,8 @@ int main() {
   test_identity_padded();
   test_identity_full_width_field();
   test_identity_short();
+  test_battery_scaling();
+  test_charge_estimate();
 
   printf(failures ? "\n%d check(s) failed\n" : "\nall checks passed\n", failures);
   return failures != 0;
