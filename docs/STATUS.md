@@ -8,7 +8,11 @@ unless it says otherwise.
 
 ## Where things are
 
-- Repo: `https://github.com/hsteinhaus/ups-esphome` (private), `master` pushed.
+- Repo: `https://github.com/hsteinhaus/ups-esphome` — **public, GPLv2**,
+  `master` pushed. Renamed from `apc-esphome` on 2026-10-06 once it covered
+  two UPS protocols; GitHub redirects the old URL. The working directory is
+  still `/workspace/apc-esphome`: it is a bind mount, renameable only from the
+  host.
 - Device: `10.22.10.65`, MAC `ac:27:6e:d2:5b:b4`, hostname `apc-ups-stick`,
   running `apc-ups-stick.yaml` against the BX950MI.
 - Device: `10.22.10.66`, MAC `14:c1:9f:d5:da:d8`, hostname `qx-ups-stick`,
@@ -217,6 +221,24 @@ Three things only the device could tell us:
 `qx-ups-stick.yaml`. Megatec reports load only as a percentage, so watts are
 load x that figure -- the same convention NUT and apcupsd use, and no better
 than the plate value it is given.
+
+### Detection latency, and its floor
+
+This UPS exists to buffer brief switching interruptions, so the events worth
+seeing can be shorter than one poll. The protocol has no push and no event
+latch, and a `Q1` round trip measures 350-405 ms, so there is a hard floor.
+`status_interval` is **500 ms**, measured at a 0.510 s mean gap over 42 polls
+with no timeouts, no unparsed replies and no late replies -- the bridge takes
+double the old rate without desyncing. Worst-case detection is about 0.9 s,
+down from 1.4 s. **An interruption shorter than roughly half a second can
+still pass entirely unseen**, and no amount of tuning fixes that: it is the
+protocol, not the implementation.
+
+That forced the scheduler order. Status-first would starve the nameplate
+queries once the interval drops below one round trip, and the `F` rating is
+not optional -- without it the battery voltage publishes per cell as though it
+were the pack. `I` and `F` now go first and only at startup, with bounded
+retries, and status owns everything afterwards.
 
 ## Still open
 
