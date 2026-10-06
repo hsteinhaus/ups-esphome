@@ -3,8 +3,12 @@
 
 esptool cannot do it: UiFlow2 presents a TinyUSB CDC port rather than the ROM's
 USB-Serial-JTAG, so DTR/RTS carry no hardware reset and merely wedge the
-firmware -- the port vanishes and only the power button brings it back. The
-board also has its own cell, so neither the host nor a hub can power-cycle it.
+firmware -- the port vanishes and only the side button brings it back. The board
+also has its own cell, so neither the host nor a hub can power-cycle it.
+
+Side button, per M5Stack's documentation: single click powers on or resets,
+double click powers off, long press enters download mode with the green LED
+flashing. A board already in download mode is flashed here without any reset.
 
 Every step here therefore fails safe: it does nothing it cannot first confirm,
 and leaves the board enumerated rather than risking the state that costs a
@@ -116,7 +120,10 @@ def main():
         print(f"waiting up to {args.timeout:.0f}s for the board ...", flush=True)
         app = wait_for(APP_MATCH, args.timeout)
         if app is None:
-            sys.exit("no StickS3 port appeared; board left untouched")
+            sys.exit(
+                "no StickS3 port appeared; board left untouched. A double click powers "
+                "it off, a single click powers it on, a long press enters download mode"
+            )
         print(f"found {app}", flush=True)
 
         if problem := enter_download_mode(app, args.force):
@@ -126,7 +133,7 @@ def main():
         if rom is None:
             sys.exit(
                 f"no port appeared within {ROM_WAIT}s of machine.bootloader(). "
-                "USB download mode may be disabled by eFuse; hold button A while powering on"
+                "long-press the side button until the green LED flashes"
             )
         print(f"ROM bootloader at {rom}", flush=True)
 
