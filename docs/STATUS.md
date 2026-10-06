@@ -89,6 +89,26 @@ and the UPS, the board sources nothing, and the UPS enumerates and pushes
 normally. The splitter feeding its peripheral leg was the open question; it
 does.
 
+## StickS3, second board
+
+Flashed and verified on hardware: `10.22.10.65`, MAC `ac:27:6e:d2:5b:b4`,
+ESP32-S3-PICO-1 (LGA56), 8MB flash, no PSRAM enabled. `tools/sticks3_deploy.py`
+reports 8/8, including that the M5PM1 answered on I2C and the LCD rail came up
+-- the failure that would otherwise be a dark panel and no error.
+
+Two traps worth keeping:
+
+- `machine.bootloader()` sets a force-download flag that an ordinary reset does
+  not clear, so the board returns to `boot:0x0 (DOWNLOAD)` and never runs what
+  was just flashed. `esptool --after watchdog-reset` is the way out.
+- Flashing it while UiFlow2 is still installed cannot be done with esptool
+  alone: that firmware presents a TinyUSB CDC port, where DTR/RTS carry no
+  hardware reset and merely wedge it. The deploy tool asks MicroPython instead.
+
+Side button: single click powers on or resets, double click powers off, long
+press enters download mode with the green LED flashing. A board that is simply
+switched off looks exactly like one that has vanished from the bus.
+
 ## Still open
 
 1. **`/update` browser OTA** is registered but never exercised. It is the

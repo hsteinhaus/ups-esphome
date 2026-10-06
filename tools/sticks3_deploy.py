@@ -115,6 +115,15 @@ def flash(config, timeout, allow_reset):
     log("flashing")
     if subprocess.call([ESPHOME, "upload", config, "--device", rom]) != 0:
         return "esphome upload failed"
+
+    # machine.bootloader() sets a force-download flag that an ordinary reset
+    # does not clear, so the board comes straight back to "waiting for
+    # download" and never runs what was just written. A watchdog reset is the
+    # documented way out on USB-Serial-JTAG parts.
+    log("watchdog reset to leave download mode")
+    if subprocess.call(["work/venv/bin/esptool", "--port", rom,
+                        "--after", "watchdog-reset", "run"]) != 0:
+        return "could not reset out of download mode"
     return None
 
 
@@ -155,25 +164,29 @@ def http_open(host):
         return None
 
 
-def find_device(subnet, name, timeout):
-    """mDNS first, then a sweep -- a new MAC usually means a new lease."""
+def find_device(subnet, name, timeout, identify=None):
+    """mDNS first, then a sweep -- a new MAC usually means a new lease.
+
+    Returns every ESPHome host found. Picking the first match once verified a
+    different board entirely and reported its missing component as a failure,
+    so the caller decides when there is more than one.
+    """
     deadline = time.monotonic() + timeout
+    probe_path = f"/{identify}" if identify else f"/{STATUS_ENTITY}"
     while time.monotonic() < deadline:
         try:
             if host := socket.gethostbyname(f"{name}.local"):
-                if probe(host, "/"):
-                    return host
+                if probe(host, probe_path) is not None:
+                    return [host]
         except OSError:
             pass
         with ThreadPoolExecutor(max_workers=64) as pool:
             live = [h for h in pool.map(http_open, (f"{subnet}.{i}" for i in range(1, 255))) if h]
-        for host in live:
-            # The web API keys entities by NAME, not by the YAML id, so this is
-            # /binary_sensor/status -- both board packages define that sensor.
-            if probe(host, f"/{STATUS_ENTITY}") is not None:
-                return host
+        # The web API keys entities by NAME, not by the YAML id.
+        if found := [h for h in live if probe(h, probe_path) is not None]:
+            return found
         time.sleep(3)
-    return None
+    return []
 
 
 def capture_log(config, host, seconds=35):
@@ -221,6 +234,8 @@ def main():
     parser.add_argument("--subnet", default="10.22.10")
     parser.add_argument("--no-reset", action="store_true")
     parser.add_argument("--skip-flash", action="store_true")
+    parser.add_argument("--host", help="skip discovery and verify this address")
+    parser.add_argument("--identify", help="entity path unique to this board, e.g. binary_sensor/button_a")
     args = parser.parse_args()
 
     if not args.skip_flash:
@@ -229,9 +244,18 @@ def main():
         log("flash complete; waiting for the board to join")
 
     name = device_name(args.config)
-    host = find_device(args.subnet, name, 180)
-    if host is None:
-        sys.exit(f"VERIFY FAILED: {name} never appeared on {args.subnet}.0/24")
+    if args.host:
+        host = args.host
+    else:
+        hosts = find_device(args.subnet, name, 180, args.identify)
+        if not hosts:
+            sys.exit(f"VERIFY FAILED: {name} never appeared on {args.subnet}.0/24")
+        if len(hosts) > 1:
+            sys.exit(
+                f"VERIFY FAILED: {len(hosts)} ESPHome hosts match ({', '.join(hosts)}). "
+                "Pass --identify <entity unique to this board> or --host"
+            )
+        host = hosts[0]
     log(f"device at {host}")
 
     results = verify(args.config, host)
