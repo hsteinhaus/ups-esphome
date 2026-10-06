@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Flash a StickS3 that is still running UiFlow2, without touching the board.
+"""Flash a StickS3 that is still running UiFlow2, without a button press.
 
-esptool's DTR/RTS auto-reset does nothing useful here: UiFlow2 presents a
-TinyUSB CDC port, not the ROM's USB-Serial-JTAG, so the toggle has no hardware
-meaning and merely wedges the firmware -- the port disappears and nothing comes
-back. MicroPython can be asked directly instead: machine.bootloader() enters ROM
-download mode on purpose, and the ROM then enumerates under a different by-id
-name, which this follows.
+esptool cannot do it: UiFlow2 presents a TinyUSB CDC port rather than the ROM's
+USB-Serial-JTAG, so DTR/RTS carry no hardware reset and merely wedge the
+firmware -- the port vanishes and only the power button brings it back. The
+board also has its own cell, so neither the host nor a hub can power-cycle it.
 
-Usage: tools/sticks3_flash.py <config.yaml> [timeout_s]
+Every step here therefore fails safe: it does nothing it cannot first confirm,
+and leaves the board enumerated rather than risking the state that costs a
+button press. Pass --force to skip the REPL checks.
+
+Usage: tools/sticks3_flash.py <config.yaml> [--timeout S] [--force]
 """
+import argparse
 import glob
 import subprocess
 import sys
@@ -18,60 +21,94 @@ import time
 import serial
 
 BY_ID = "/dev/serial/by-id/"
-APP_MATCH = "StickS3"       # UiFlow2's own CDC
-ROM_MATCH = "USB_JTAG"      # what the ROM bootloader enumerates as
+APP_MATCH = "StickS3"   # UiFlow2's own CDC
+ROM_MATCH = "USB_JTAG"  # what the ROM bootloader enumerates as
+
+PROMPT = b">>>"
 
 
 def ports(match):
     return sorted(p for p in glob.glob(BY_ID + "*") if match in p)
 
 
-def wait_for(match, timeout, invert=False):
+def wait_for(match, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        found = ports(match)
-        if bool(found) != invert:
-            return found[0] if found else True
+        if found := ports(match):
+            return found[0]
         time.sleep(0.5)
     return None
 
 
-def enter_download_mode(port):
-    # Ctrl-C twice to break whatever UiFlow2 is running, then ask for the ROM.
-    with serial.Serial(port, 115200, timeout=1) as ser:
-        ser.write(b"\x03\x03\r\n")
-        time.sleep(0.3)
-        ser.reset_input_buffer()
-        ser.write(b"import machine; machine.bootloader()\r\n")
+def open_quietly(port):
+    """Open without asserting DTR/RTS.
+
+    pyserial raises both on open, and on this CDC stack that is itself enough to
+    reset the board -- the very outcome this tool exists to avoid.
+    """
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = 115200
+    ser.timeout = 1
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    return ser
+
+
+def ask(ser, line, settle=0.4):
+    ser.reset_input_buffer()
+    ser.write(line + b"\r\n")
+    ser.flush()
+    time.sleep(settle)
+    return ser.read(ser.in_waiting or 1)
+
+
+def enter_download_mode(port, force):
+    with open_quietly(port) as ser:
+        # Ctrl-C only interrupts a running script; it cannot reset the board.
+        ser.write(b"\x03\x03")
         ser.flush()
+        time.sleep(0.4)
+        banner = ask(ser, b"")
+
+        if not force:
+            if PROMPT not in banner:
+                return "no MicroPython prompt -- left the board alone"
+            if b"True" not in ask(ser, b'import machine; print(hasattr(machine, "bootloader"))'):
+                return "machine.bootloader() is unavailable -- left the board alone"
+
+        # Confirmed reachable: this is the one command that drops the port.
+        ser.write(b"machine.bootloader()\r\n")
+        ser.flush()
+    return None
 
 
 def main():
-    if len(sys.argv) < 2:
-        sys.exit("usage: sticks3_flash.py <config.yaml> [timeout_s]")
-    config, timeout = sys.argv[1], float(sys.argv[2]) if len(sys.argv) > 2 else 600.0
+    parser = argparse.ArgumentParser()
+    parser.add_argument("config")
+    parser.add_argument("--timeout", type=float, default=7200.0)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
 
-    print(f"waiting up to {timeout:.0f}s for the board to appear ...", flush=True)
-    app = wait_for(APP_MATCH, timeout)
-    if app is None:
-        sys.exit("no StickS3 CDC port appeared -- reset the board (hold ~6s, then press)")
-    print(f"found {app}", flush=True)
+    if rom := (ports(ROM_MATCH) or [None])[0]:
+        print(f"already in ROM download mode at {rom}", flush=True)
+    else:
+        print(f"waiting up to {args.timeout:.0f}s for the board ...", flush=True)
+        app = wait_for(APP_MATCH, args.timeout)
+        if app is None:
+            sys.exit("no StickS3 port appeared; board left untouched")
+        print(f"found {app}", flush=True)
 
-    # Already in the ROM? Then skip straight to flashing.
-    if not ports(ROM_MATCH):
-        print("asking MicroPython for ROM download mode ...", flush=True)
-        try:
-            enter_download_mode(app)
-        except serial.SerialException as err:
-            print(f"REPL write failed ({err}); the port may already be resetting", flush=True)
+        if problem := enter_download_mode(app, args.force):
+            sys.exit(f"{problem} (still on the bus; --force overrides)")
 
         rom = wait_for(ROM_MATCH, 30)
         if rom is None:
-            sys.exit("the ROM bootloader never enumerated -- hold button A while powering on")
-    rom = ports(ROM_MATCH)[0]
-    print(f"ROM bootloader at {rom}", flush=True)
+            sys.exit("ROM never enumerated -- hold button A while powering on")
+        print(f"ROM bootloader at {rom}", flush=True)
 
-    cmd = ["work/venv/bin/esphome", "upload", config, "--device", rom]
+    cmd = ["work/venv/bin/esphome", "upload", args.config, "--device", rom]
     print(" ".join(cmd), flush=True)
     sys.exit(subprocess.call(cmd))
 
