@@ -1,8 +1,8 @@
 # Project state
 
-Stage 1 (CoreS3 bring-up) and stage 2 (UPS monitoring) are both complete and
-verified against the real BX950MI. Everything below is fact established on
-hardware, not inference.
+Stage 1 (board bring-up), stage 2 (UPS monitoring) and stage 3 (the move to a
+StickS3) are complete and verified against the real BX950MI. Everything below is
+fact established on hardware, not inference.
 
 ## Where things are
 
@@ -16,10 +16,19 @@ hardware, not inference.
 ## Building and flashing
 
 ```sh
-work/venv/bin/esphome compile apc-ups.yaml
-work/venv/bin/esphome upload apc-ups-stick.yaml --device 10.22.10.65   # OTA
-work/venv/bin/python tools/sticks3_deploy.py apc-ups-stick.yaml       # flash + verify
-tools/cores3.sh upload apc-ups.yaml                              # USB, by-id
+work/venv/bin/esphome compile apc-ups-stick.yaml
+work/venv/bin/esphome upload apc-ups-stick.yaml --device 10.22.10.65  # OTA
+work/venv/bin/python tools/sticks3_deploy.py apc-ups-stick.yaml       # USB flash + verify
+work/venv/bin/python tools/sticks3_deploy.py apc-ups-stick.yaml \
+    --skip-flash --host 10.22.10.65                                   # verify only
+```
+
+After a container restart `~/.platformio` is wiped and PlatformIO cannot rebuild
+its own environment, because this image has no `ensurepip`. Recreate it first,
+or every build fails on "Failed to create virtual environment":
+
+```sh
+work/venv/bin/python -m virtualenv ~/.platformio/penv
 ```
 
 Push with `git -c credential.helper='!gh auth git-credential' push origin master`
@@ -33,10 +42,14 @@ boards.
 
 | File | Purpose |
 |---|---|
-| `apc-ups.yaml` | Production: UPS entities, display, web UI |
+| `common/ups-monitor.yaml` | Board-independent half: USB host, `apc_ups`, every entity |
+| `apc-ups-stick.yaml` | Deployed: StickS3 board package plus a 240x135 layout |
+| `apc-ups.yaml` | CoreS3 build, kept working but not deployed |
+| `boards/m5stick-s3.yaml` | StickS3 package: PMIC, display, buttons; no VBUS path |
+| `boards/m5stack-cores3.yaml` | CoreS3 package: PMU rails, IO expander, USB host power |
 | `usb-host-probe.yaml` | Generic USB host testing, wildcard vid/pid, register dumpers |
 | `cores3-bringup.yaml` | Stage-1 hardware check |
-| `boards/m5stack-cores3.yaml` | Shared board package |
+| `tools/sticks3_deploy.py` | Flash and verify the StickS3; see its docstring for the traps |
 
 ## Verified on hardware
 
@@ -102,6 +115,11 @@ reports 8/8, including that the M5PM1 answered on I2C and the LCD rail came up
 attached it reads 226 V in, 14 % load, 73 W against a 520 W nameplate, battery
 13.60 V at 100 %, and the interrupt endpoint delivers: 180 pushes of `0x16`
 PresentStatus and `0x0C` RemainingCapacity in 30 s, about 200 ms apart.
+
+The panel is documented as ST7789P3 while the build uses ESPHome's ST7789V
+`T-DISPLAY` model -- same geometry and offsets, possibly a different init
+sequence. It renders correctly, but if a future panel revision comes up blank or
+inverted, that is the first thing to change, not the pins.
 
 Not yet tested on this board: a mains-loss transition. The mechanism is proven
 and the firmware is the one validated on the CoreS3, but the end-to-end event
