@@ -122,11 +122,15 @@ switched off looks exactly like one that has vanished from the bus.
 
 ## Still open
 
-1. **`/update` browser OTA** is registered but never exercised. It is the
-   recovery path once the board is at the UPS -- test it while still reachable.
-1. **Upstream reports not filed** (see below).
+1. **A mains-loss transition on the StickS3.** The push path is proven on it
+   and the firmware is the one validated on the CoreS3, but the event itself
+   has not been seen on this board.
 
 ## Upstream bugs found
+
+Filing these was declined on 2026-10-06 -- a decision, not an oversight. They
+are kept here because each one cost hours to find and each is invisible from
+the outside.
 
 - `m5stack/esphome-yaml` `axp2101` emits a `battery_charging` binary sensor
   without declaring `binary_sensor` in `AUTO_LOAD`; builds fail on a missing
