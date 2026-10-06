@@ -36,6 +36,9 @@ APP_MATCH = "StickS3"
 PROMPT = b">>>"
 ROM_WAIT = 120
 ESPHOME = "work/venv/bin/esphome"
+# Keyed by entity NAME ("Status"), not by the YAML id -- the two differ, and
+# using the id matches nothing, which reads exactly like an absent device.
+STATUS_ENTITY = "binary_sensor/status"
 
 
 def log(msg):
@@ -117,6 +120,19 @@ def flash(config, timeout, allow_reset):
 
 # ------------------------------------------------------------ verification
 
+def uses_m5pm1(config):
+    """True when this build includes the PMIC, packages included."""
+    from pathlib import Path
+
+    root = Path(config).resolve().parent
+    text = Path(config).read_text()
+    for include in re.findall(r"!include\s+(\S+)", text):
+        path = root / include
+        if path.exists():
+            text += path.read_text()
+    return "m5pm1" in text
+
+
 def device_name(config):
     text = open(config).read()
     match = re.search(r"^\s*name:\s*([\w-]+)\s*$", text, re.M)
@@ -152,8 +168,9 @@ def find_device(subnet, name, timeout):
         with ThreadPoolExecutor(max_workers=64) as pool:
             live = [h for h in pool.map(http_open, (f"{subnet}.{i}" for i in range(1, 255))) if h]
         for host in live:
-            status = probe(host, "/binary_sensor/device_status")
-            if status is not None:
+            # The web API keys entities by NAME, not by the YAML id, so this is
+            # /binary_sensor/status -- both board packages define that sensor.
+            if probe(host, f"/{STATUS_ENTITY}") is not None:
                 return host
         time.sleep(3)
     return None
@@ -176,7 +193,7 @@ def verify(config, host):
     results = []
 
     entities = {
-        "status binary sensor": "/binary_sensor/device_status",
+        "status binary sensor": f"/{STATUS_ENTITY}",
         "backlight (display stack built)": "/light/backlight",
         "UPS load sensor (apc_ups wired)": "/sensor/ups_load",
     }
@@ -184,9 +201,14 @@ def verify(config, host):
         results.append((label, probe(host, path) is not None))
 
     text = capture_log(config, host)
-    # The LCD rail is the one that fails invisibly: a dark panel, no error.
-    results.append(("M5PM1 PMIC answered", "PMIC did not answer" not in text))
-    results.append(("LCD rail enabled", "could not enable the LCD rail" not in text))
+    # Absence of an error proves nothing when the component is absent too, so
+    # the PMIC is only checked on boards that have one, and then by its own
+    # dump_config banner. The LCD rail is what fails invisibly here: a dark
+    # panel, no error anywhere.
+    if uses_m5pm1(config):
+        results.append(("M5PM1 PMIC reported itself", "M5PM1 PMIC" in text))
+        results.append(("PMIC answered on I2C", "PMIC did not answer" not in text))
+        results.append(("LCD rail enabled", "could not enable the LCD rail" not in text))
     results.append(("no component marked failed", "mark_failed" not in text and "] Failed" not in text))
     results.append(("USB host started", "usb_host" in text.lower() or "USBClient" in text))
     return results
