@@ -22,7 +22,11 @@ import serial
 
 BY_ID = "/dev/serial/by-id/"
 APP_MATCH = "StickS3"   # UiFlow2's own CDC
-ROM_MATCH = "USB_JTAG"  # what the ROM bootloader enumerates as
+# The ROM usually comes up as "Espressif USB JTAG serial debug unit", but the
+# product string is not a contract: match on "not the app port" instead, so a
+# board sitting in download mode is never missed over its name. esptool detects
+# the chip itself.
+ROM_WAIT = 90
 
 PROMPT = b">>>"
 
@@ -31,10 +35,25 @@ def ports(match):
     return sorted(p for p in glob.glob(BY_ID + "*") if match in p)
 
 
+def rom_ports():
+    return sorted(p for p in glob.glob(BY_ID + "*") if APP_MATCH not in p)
+
+
 def wait_for(match, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if found := ports(match):
+            return found[0]
+        time.sleep(0.5)
+    return None
+
+
+def wait_for_rom(timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if found := rom_ports():
+            # Let the kernel finish binding before esptool opens it.
+            time.sleep(1.0)
             return found[0]
         time.sleep(0.5)
     return None
@@ -91,7 +110,7 @@ def main():
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    if rom := (ports(ROM_MATCH) or [None])[0]:
+    if rom := (rom_ports() or [None])[0]:
         print(f"already in ROM download mode at {rom}", flush=True)
     else:
         print(f"waiting up to {args.timeout:.0f}s for the board ...", flush=True)
@@ -103,9 +122,12 @@ def main():
         if problem := enter_download_mode(app, args.force):
             sys.exit(f"{problem} (still on the bus; --force overrides)")
 
-        rom = wait_for(ROM_MATCH, 30)
+        rom = wait_for_rom(ROM_WAIT)
         if rom is None:
-            sys.exit("ROM never enumerated -- hold button A while powering on")
+            sys.exit(
+                f"no port appeared within {ROM_WAIT}s of machine.bootloader(). "
+                "USB download mode may be disabled by eFuse; hold button A while powering on"
+            )
         print(f"ROM bootloader at {rom}", flush=True)
 
     cmd = ["work/venv/bin/esphome", "upload", args.config, "--device", rom]
