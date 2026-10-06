@@ -7,7 +7,9 @@ hardware, not inference.
 ## Where things are
 
 - Repo: `https://github.com/hsteinhaus/apc-esphome` (private), `master` pushed.
-- Device: `10.22.10.64`, hostname `apc-ups`, running `apc-ups.yaml`.
+- Device: `10.22.10.65`, hostname `apc-ups-stick`, running `apc-ups-stick.yaml`.
+  The CoreS3 was disconnected on 2026-10-06; `apc-ups.yaml` is kept working but
+  is no longer deployed.
 - Toolchain: `work/venv/bin/esphome` (2026.6.5), gitignored, on the mount.
 - The secrets file is user-owned. Never read, write or echo it.
 
@@ -15,7 +17,8 @@ hardware, not inference.
 
 ```sh
 work/venv/bin/esphome compile apc-ups.yaml
-work/venv/bin/esphome upload apc-ups.yaml --device 10.22.10.64   # OTA
+work/venv/bin/esphome upload apc-ups-stick.yaml --device 10.22.10.65   # OTA
+work/venv/bin/python tools/sticks3_deploy.py apc-ups-stick.yaml       # flash + verify
 tools/cores3.sh upload apc-ups.yaml                              # USB, by-id
 ```
 
@@ -91,10 +94,18 @@ does.
 
 ## StickS3, second board
 
-Flashed and verified on hardware: `10.22.10.65`, MAC `ac:27:6e:d2:5b:b4`,
+Now the only deployed board. Verified on hardware: `10.22.10.65`, MAC
+`ac:27:6e:d2:5b:b4`,
 ESP32-S3-PICO-1 (LGA56), 8MB flash, no PSRAM enabled. `tools/sticks3_deploy.py`
 reports 8/8, including that the M5PM1 answered on I2C and the LCD rail came up
--- the failure that would otherwise be a dark panel and no error.
+-- the failure that would otherwise be a dark panel and no error. With the UPS
+attached it reads 226 V in, 14 % load, 73 W against a 520 W nameplate, battery
+13.60 V at 100 %, and the interrupt endpoint delivers: 180 pushes of `0x16`
+PresentStatus and `0x0C` RemainingCapacity in 30 s, about 200 ms apart.
+
+Not yet tested on this board: a mains-loss transition. The mechanism is proven
+and the firmware is the one validated on the CoreS3, but the end-to-end event
+has not been seen here.
 
 Two traps worth keeping:
 
