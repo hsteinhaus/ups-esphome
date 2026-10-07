@@ -281,8 +281,12 @@ chance. Both OTA platforms in both configs now call `suspend_usb()` on_begin:
 halt the endpoint, flush it, and wait for an in-flight command to land, so
 nothing is outstanding when the cache goes away. `on_error` resumes.
 
-**Any future flash write from a running board has the same hazard** -- NVS
-preference saves included. If one is added, quiesce USB around it.
+**The hazard scales with the cache-off window, and routine NVS writes are
+below it.** Measured 2026-10-07 on the ABB board: `flash_write_interval: 1s`
+plus a persisting backlight, 51 real `Writing 1 items` preference writes with
+the endpoint armed, zero faults and `Q1` never missed. A 4 KB page write
+survives; the ~1.1 MB `esp_ota_begin` erase does not. So preference saves need
+no guard, but anything that erases in bulk does.
 
 **Recovering a board that predates the fix:** its firmware crashes on every
 OTA attempt, so it cannot receive the fix. Each attempt crashes it inside

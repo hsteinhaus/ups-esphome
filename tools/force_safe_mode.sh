@@ -14,6 +14,12 @@
 # num_attempts (10 by default) the board boots into safe mode, where the
 # offending component never starts and the OTA lands.
 #
+# ATTEMPT_TIMEOUT is the whole trick. The upload client keeps waiting long
+# after the board has crashed and rebooted, so leaving it to time out on its
+# own puts the next attempt more than boot_is_good_after (60s) past the
+# reboot -- the counter resets every cycle and safe mode never arrives. Cut
+# the client off instead, so the next crash lands inside the window.
+#
 # Usage: tools/force_safe_mode.sh <config.yaml> <host> [max-attempts]
 set -u
 
@@ -22,6 +28,7 @@ HOST=${2:?usage: force_safe_mode.sh <config.yaml> <host> [max-attempts]}
 MAX=${3:-16}
 ESPHOME=${ESPHOME:-work/venv/bin/esphome}
 PORT=3232
+ATTEMPT_TIMEOUT=${ATTEMPT_TIMEOUT:-25}
 
 # The board is reachable again once it reopens the OTA port; polling that is
 # what keeps each attempt inside the 60s window that increments the counter.
@@ -39,7 +46,7 @@ for attempt in $(seq 1 "$MAX"); do
     echo "board never opened $PORT; stopping"
     exit 1
   fi
-  out=$(timeout 150 "$ESPHOME" upload "$CONFIG" --device "$HOST" 2>&1)
+  out=$(timeout "$ATTEMPT_TIMEOUT" "$ESPHOME" upload "$CONFIG" --device "$HOST" 2>&1)
   echo "$out" | tail -3
   if echo "$out" | grep -q "OTA successful"; then
     echo "=== RECOVERED on attempt $attempt  $(date +%T)"
