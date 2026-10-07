@@ -77,6 +77,7 @@ boards.
 | `tools/sticks3_deploy.py` | Flash and verify a StickS3; see its docstring for the traps |
 | `tools/qx_probe.py` | Host-side dialect probe for a Cypress-bridged UPS |
 | `tools/qx_protocol_test.cpp` | Host-side tests for the Megatec reply parser |
+| `tools/force_safe_mode.sh` | Recover a board whose firmware crashes during OTA |
 
 ## Verified on hardware
 
@@ -249,13 +250,46 @@ retries, and status owns everything afterwards.
    confirmed against the device, but no transition has been observed: the
    `utility fail` bit, the latched input fault voltage and the discharge curve
    are still only as good as the protocol says.
-3. **Why the APC board's UPS disconnected once on 2026-10-07.** At uptime
-   2315 s the device vanished from the bus and re-enumerated; the board did not
-   reboot and ran 1 h 42 min afterwards reading normally. The log shows a clean
-   teardown (`Device gone`, then `Event flags 2X` = `ALL_FREE`) with no VBUS
-   event and no commanded power cycle, so nothing points at the board. A
-   spontaneous re-enumeration by the UPS and a contact glitch on the Y splitter
-   look identical from here. One occurrence in 2 h 20 min; unexplained.
+3. **Whether the 2026-10-07 teardown was the flash-window fault.** At uptime
+   2315 s the APC board's device vanished and re-enumerated without a reboot.
+   The same day, OTA on that board was found to crash in `esp_ota_begin`, root
+   caused below, and a port event is the gentler outcome of the same starvation.
+   That is a strong lead, not a proof: nothing in the log ties that particular
+   teardown to a flash write. The reconnect gap now logged will classify the
+   next one -- a port error re-enumerates a still-attached device in a few
+   hundred ms, a real disconnect takes as long as the cable does.
+
+## The USB host ISR cannot survive a flash erase
+
+The decisive find of 2026-10-07, and the reason OTA stopped working.
+
+The ESP-IDF USB host ISR is flash-resident and the whole USB-OTG Kconfig menu
+offers **no IRAM option**. While a flash erase has the cache off, that ISR
+cannot run, but the DWC controller keeps going. When interrupts come back the
+ISR finds the buffer state past its own bookkeeping and asserts:
+
+```
+Fault - IllegalInstruction, core 1
+panic_abort <- __assert_func <- hcd_dwc _buffer_parse <- _xt_lowint1
+  <- esp_intr_noniram_enable <- spi_flash_op_block_func <- ipc_task
+  (from esphome::ota::IDFOTABackend::begin)
+```
+
+With an interrupt endpoint armed continuously -- which both components do on
+purpose -- a transfer landing inside the erase window is a certainty, not a
+chance. Both OTA platforms in both configs now call `suspend_usb()` on_begin:
+halt the endpoint, flush it, and wait for an in-flight command to land, so
+nothing is outstanding when the cache goes away. `on_error` resumes.
+
+**Any future flash write from a running board has the same hazard** -- NVS
+preference saves included. If one is added, quiesce USB around it.
+
+**Recovering a board that predates the fix:** its firmware crashes on every
+OTA attempt, so it cannot receive the fix. Each attempt crashes it inside
+`boot_is_good_after` (60 s), so the safe_mode boot-loop counter climbs; after
+`num_attempts` (10) it boots into safe mode, where `usb_host` never starts and
+the OTA lands. `tools/force_safe_mode.sh <config.yaml> <host>` does this.
+Done once, on the APC board, 2026-10-07.
 
 ## Upstream bugs found
 
