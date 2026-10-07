@@ -37,6 +37,8 @@ static constexpr size_t CHUNK = 8;
 static const char *const COMMAND_TEXT[] = {nullptr, "Q1", "F", "I"};
 
 void QxUPSClient::on_connected() {
+  if (this->disconnected_at_ != 0)
+    ESP_LOGW(TAG, "bridge reconnected %ums after it went away", millis() - this->disconnected_at_);
   ESP_LOGI(TAG, "UPS bridge connected");
   this->interrupt_ep_ = 0;
   this->interrupt_pending_ = false;
@@ -68,6 +70,8 @@ void QxUPSClient::on_connected() {
 }
 
 void QxUPSClient::on_disconnected() {
+  ESP_LOGI(TAG, "UPS bridge disconnected");
+  this->disconnected_at_ = millis();
   if (this->interface_claimed_) {
     usb_host_interface_release(this->handle_, this->device_handle_, this->hid_interface_);
     this->interface_claimed_ = false;
@@ -111,6 +115,27 @@ bool QxUPSClient::discover_hid_interface_() {
   return false;
 }
 
+// CALLER CONTEXT: main loop only. usb_host_endpoint_clear() blocks, so it must
+// never run in the transfer callback's task.
+void QxUPSClient::recover_interrupt_() {
+  const uint16_t code = this->interrupt_fault_code_;
+  this->interrupt_faults_++;
+  // Bounded: an endpoint that fails on every attempt must not flood the log.
+  if (this->interrupt_faults_ <= 5 || this->interrupt_faults_ % 100 == 0) {
+    ESP_LOGW(TAG, "interrupt read on 0x%02X failed, transfer status %u (fault %u)", this->interrupt_ep_, code,
+             this->interrupt_faults_);
+  }
+  this->status_set_warning(LOG_STR("interrupt endpoint faulted"));
+
+  // A halted endpoint cannot communicate again until it is cleared. Nothing
+  // else in the stack does this, so a resubmit without it spins forever.
+  const esp_err_t err = usb_host_endpoint_clear(this->device_handle_, this->interrupt_ep_);
+  if (err != ESP_OK && this->interrupt_faults_ <= 5)
+    ESP_LOGW(TAG, "clear halt on 0x%02X: %s", this->interrupt_ep_, esp_err_to_name(err));
+
+  this->start_interrupt_in_();
+}
+
 void QxUPSClient::start_interrupt_in_() {
   // Claim the subscription before submitting, so the USB task re-arming from a
   // callback and the main loop recovering a lost one cannot both submit.
@@ -121,10 +146,24 @@ void QxUPSClient::start_interrupt_in_() {
       this->interrupt_ep_,
       // CALLBACK CONTEXT: USB task. Assemble only -- parsing runs in loop().
       [this](const usb_host::TransferStatus &status) {
+        this->interrupt_pending_ = false;
+
+        if (!status.success) {
+          // Hand the fault to loop(): the recovery blocks, and re-arming from
+          // here would resubmit into a halted pipe for as long as it lasts.
+          this->interrupt_fault_code_ = status.error_code;
+          if (!pipe_gone(status)) {
+            this->interrupt_halted_ = true;
+            this->enable_loop_soon_any_context();
+          }
+          return;
+        }
+        this->interrupt_ok_ = true;
+
         // A new command discards whatever a timed-out one left half-read.
         if (this->rx_reset_.exchange(false))
           this->rx_len_ = 0;
-        if (status.success && status.data_len > 0 && !this->reply_ready_) {
+        if (status.data_len > 0 && !this->reply_ready_) {
           for (size_t i = 0; i < status.data_len; i++) {
             const char c = static_cast<char>(status.data[i]);
             if (c == '\r') {
@@ -144,9 +183,7 @@ void QxUPSClient::start_interrupt_in_() {
         // Stay armed. This is what keeps the bridge's 8-report buffer empty,
         // and an empty buffer is why a stale reply can never be read as the
         // next command's answer -- the desync NUT has to drain for.
-        this->interrupt_pending_ = false;
-        if (!pipe_gone(status))
-          this->start_interrupt_in_();
+        this->start_interrupt_in_();
       },
       this->interrupt_mps_);
 
@@ -203,6 +240,11 @@ void QxUPSClient::loop() {
       this->disable_loop();
     return;
   }
+
+  if (this->interrupt_halted_.exchange(false))
+    this->recover_interrupt_();
+  if (this->interrupt_ok_.exchange(false))
+    this->status_clear_warning();
 
   // Recover a subscription that a transient submit failure dropped.
   this->start_interrupt_in_();

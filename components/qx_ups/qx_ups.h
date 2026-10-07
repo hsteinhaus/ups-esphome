@@ -96,6 +96,7 @@ class QxUPSClient : public usb_host::USBClient {
 
   bool discover_hid_interface_();
   void start_interrupt_in_();
+  void recover_interrupt_();
   void send_command_(Command cmd);
   void send_next_chunk_();
   void on_reply_(Command answered, const char *reply);
@@ -119,6 +120,15 @@ class QxUPSClient : public usb_host::USBClient {
   // Claimed by exchange: the USB task re-arms from the transfer callback and
   // the main loop recovers a lost subscription, and both must not submit.
   std::atomic<bool> interrupt_pending_{false};
+  // A failed transfer halts the pipe, and only a blocking call can clear it,
+  // so the USB task hands the recovery to loop() through these.
+  std::atomic<bool> interrupt_halted_{false};
+  std::atomic<bool> interrupt_ok_{false};
+  // A port error recovers a still-attached device in a few hundred ms; a
+  // real disconnect takes as long as the cable does. The gap tells them apart.
+  uint32_t disconnected_at_{0};
+  std::atomic<uint16_t> interrupt_fault_code_{0};
+  uint32_t interrupt_faults_{0};
 
   // A reply is assembled from interrupt chunks by the USB task and handed to
   // the main loop whole, so parsing never runs in a transfer callback.

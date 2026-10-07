@@ -131,6 +131,8 @@ bool APCUPSClient::discover_hid_interface_() {
 }
 
 void APCUPSClient::on_connected() {
+  if (this->disconnected_at_ != 0)
+    ESP_LOGW(TAG, "UPS reconnected %ums after it went away", millis() - this->disconnected_at_);
   ESP_LOGI(TAG, "UPS connected, requesting HID report descriptor");
   this->bound_ = false;
   this->log_index_ = -1;
@@ -162,6 +164,7 @@ void APCUPSClient::on_connected() {
 
 void APCUPSClient::on_disconnected() {
   ESP_LOGI(TAG, "UPS disconnected");
+  this->disconnected_at_ = millis();
   this->bound_ = false;
   this->log_index_ = -1;
   this->descriptor_ready_ = false;
@@ -287,6 +290,27 @@ void APCUPSClient::bind_fields_() {
            this->constant_report_count_);
 }
 
+// CALLER CONTEXT: main loop only. usb_host_endpoint_clear() blocks, so it must
+// never run in the transfer callback's task.
+void APCUPSClient::recover_interrupt_() {
+  const uint16_t code = this->interrupt_fault_code_;
+  this->interrupt_faults_++;
+  // Bounded: an endpoint that fails on every attempt must not flood the log.
+  if (this->interrupt_faults_ <= 5 || this->interrupt_faults_ % 100 == 0) {
+    ESP_LOGW(TAG, "interrupt read on 0x%02X failed, transfer status %u (fault %u)", this->interrupt_ep_, code,
+             this->interrupt_faults_);
+  }
+  this->status_set_warning(LOG_STR("interrupt endpoint faulted"));
+
+  // A halted endpoint cannot communicate again until it is cleared. Nothing
+  // else in the stack does this, so a resubmit without it spins forever.
+  const esp_err_t err = usb_host_endpoint_clear(this->device_handle_, this->interrupt_ep_);
+  if (err != ESP_OK && this->interrupt_faults_ <= 5)
+    ESP_LOGW(TAG, "clear halt on 0x%02X: %s", this->interrupt_ep_, esp_err_to_name(err));
+
+  this->start_interrupt_in_();
+}
+
 void APCUPSClient::start_interrupt_in_() {
   // Claim the subscription before submitting, so the USB task re-arming from a
   // callback and the main loop recovering a lost one cannot both submit.
@@ -297,7 +321,21 @@ void APCUPSClient::start_interrupt_in_() {
       this->interrupt_ep_,
       // CALLBACK CONTEXT: USB task.
       [this](const usb_host::TransferStatus &status) {
-        if (status.success && status.data_len >= 2) {
+        this->interrupt_pending_ = false;
+
+        if (!status.success) {
+          // Hand the fault to loop(): the recovery blocks, and re-arming from
+          // here would resubmit into a halted pipe for as long as it lasts.
+          this->interrupt_fault_code_ = status.error_code;
+          if (!pipe_gone(status)) {
+            this->interrupt_halted_ = true;
+            this->enable_loop_soon_any_context();
+          }
+          return;
+        }
+
+        this->interrupt_ok_ = true;
+        if (status.data_len >= 2) {
           // VERBOSE, not DEBUG: this fires several times a second and drowns
           // everything else. It is the proof the endpoint delivers, so it stays.
           ESP_LOGV(TAG, "push report 0x%02X (%u bytes)", status.data[0], status.data_len);
@@ -305,9 +343,7 @@ void APCUPSClient::start_interrupt_in_() {
         }
         // Re-arm at once rather than waiting for the next loop: a status change
         // arriving between the two would otherwise be lost.
-        this->interrupt_pending_ = false;
-        if (!pipe_gone(status))
-          this->start_interrupt_in_();
+        this->start_interrupt_in_();
       },
       this->interrupt_mps_);
 
@@ -452,6 +488,12 @@ void APCUPSClient::loop() {
 
   if (this->bound_) {
     const uint32_t now = millis();
+    if (this->interrupt_halted_.exchange(false)) {
+      this->recover_interrupt_();
+      did_work = true;
+    }
+    if (this->interrupt_ok_.exchange(false))
+      this->status_clear_warning();
     // Recovers a subscription lost to a refused submit; a no-op while one is
     // outstanding, which is almost always.
     this->start_interrupt_in_();
