@@ -350,21 +350,37 @@ void APCUPSClient::recover_interrupt_() {
 // The largest input report the descriptor declares, rounded up to whole
 // packets. Reading only one packet would split a longer report, and its tail
 // would decode as a report of its own.
-void APCUPSClient::size_interrupt_transfer_() {
-  uint16_t longest = 0;
+// Declared wire length of one input report: the report id plus the highest bit
+// any of its fields reaches. Tells a long report from two coalesced ones.
+uint16_t APCUPSClient::declared_report_len_(uint8_t report_id) const {
+  uint16_t bytes = 0;
   for (int i = 0; i < this->map_.count; i++) {
     const hid_pdc_field_t &f = this->map_.fields[i];
-    if (f.report_type != HID_PDC_INPUT)
+    if (f.report_type != HID_PDC_INPUT || f.report_id != report_id)
       continue;
-    // +1 for the report id byte the device sends ahead of the payload.
-    const uint16_t bytes = 1 + static_cast<uint16_t>((f.bit_offset + f.bit_size + 7) / 8);
-    longest = std::max(longest, bytes);
+    bytes = std::max<uint16_t>(bytes, 1 + (f.bit_offset + f.bit_size + 7) / 8);
   }
+  return bytes;
+}
 
-  const uint16_t packets = longest == 0 ? 1 : (longest + this->interrupt_mps_ - 1) / this->interrupt_mps_;
-  this->interrupt_len_ = std::min<uint16_t>(packets * this->interrupt_mps_, usb_host::USB_MAX_PACKET_SIZE);
-  ESP_LOGI(TAG, "interrupt 0x%02X mps %u, longest input report %u, reading %u", this->interrupt_ep_,
-           this->interrupt_mps_, longest, this->interrupt_len_);
+// One transfer can carry several reports back to back: a 12-byte read of this
+// UPS returns 0x0C (2 bytes) followed by the start of 0x16. Decoding only the
+// first silently drops the rest, so walk them by their declared lengths.
+// Returns the bytes left unparsed, which should always be zero.
+size_t APCUPSClient::decode_input_buffer_(const uint8_t *data, size_t len, uint8_t *reports) {
+  *reports = 0;
+  while (len >= 2) {
+    const uint16_t declared = this->declared_report_len_(data[0]);
+    // An id no field claims, or a report the transfer cut short: stop rather
+    // than resynchronise on a byte that only looks like an id.
+    if (declared < 2 || declared > len)
+      break;
+    this->decode_report_(HID_PDC_INPUT, data[0], data + 1, declared - 1);
+    (*reports)++;
+    data += declared;
+    len -= declared;
+  }
+  return len;
 }
 
 void APCUPSClient::start_interrupt_in_() {
@@ -392,23 +408,28 @@ void APCUPSClient::start_interrupt_in_() {
 
         this->interrupt_ok_ = true;
         if (status.data_len >= 2) {
-          // VERBOSE, not DEBUG: this fires several times a second and drowns
-          // everything else. It is the proof the endpoint delivers, so it stays.
-          // One sample a minute at INFO. Enumeration happens before any log
-          // client can attach, so a line logged only at connect is unreadable.
-          const uint32_t now = millis();
-          if (now - this->last_push_sample_ >= PUSH_SAMPLE_INTERVAL) {
-            this->last_push_sample_ = now;
-            ESP_LOGI(TAG, "push 0x%02X (%u of %u bytes) %s", status.data[0], status.data_len, this->interrupt_len_,
+          uint8_t reports = 0;
+          const size_t unparsed = this->decode_input_buffer_(status.data, status.data_len, &reports);
+
+          // Unparsed bytes mean the walk lost sync, which would cost updates
+          // silently, so always say so. The rest is one sample a minute:
+          // enumeration precedes any log client, so a connect-time line is
+          // unreadable.
+          if (unparsed != 0) {
+            ESP_LOGW(TAG, "push 0x%02X: %u of %u bytes unparsed after %u reports %s", status.data[0],
+                     static_cast<unsigned>(unparsed), status.data_len, reports,
                      format_hex_pretty(status.data, status.data_len).c_str());
+          } else if (millis() - this->last_push_sample_ >= PUSH_SAMPLE_INTERVAL) {
+            this->last_push_sample_ = millis();
+            ESP_LOGI(TAG, "push %u bytes, %u reports (mps %u) %s", status.data_len, reports,
+                     this->interrupt_mps_, format_hex_pretty(status.data, status.data_len).c_str());
           }
-          this->decode_report_(HID_PDC_INPUT, status.data[0], status.data + 1, status.data_len - 1);
         }
         // Re-arm at once rather than waiting for the next loop: a status change
         // arriving between the two would otherwise be lost.
         this->start_interrupt_in_();
       },
-      this->interrupt_len_);
+      this->interrupt_mps_);
 
   if (!submitted) {
     // The subscription is gone until something resubmits, so let loop() retry
@@ -537,7 +558,6 @@ void APCUPSClient::loop() {
              this->map_.has_power_page, this->map_.uses_report_ids, this->map_.truncated);
 
     this->bind_fields_();
-    this->size_interrupt_transfer_();
     this->start_interrupt_in_();
     this->start_poll_cycle_(true, true);
     this->last_poll_ = this->last_status_poll_ = millis();

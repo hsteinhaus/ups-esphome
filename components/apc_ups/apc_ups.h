@@ -74,7 +74,8 @@ class APCUPSClient : public usb_host::USBClient {
   void bind_fields_();
   void start_interrupt_in_();
   void recover_interrupt_();
-  void size_interrupt_transfer_();
+  uint16_t declared_report_len_(uint8_t report_id) const;
+  size_t decode_input_buffer_(const uint8_t *data, size_t len, uint8_t *reports);
   void start_poll_cycle_(bool include_status, bool include_metrics);
   void poll_next_();
   bool constants_pending_() const;
@@ -128,9 +129,6 @@ class APCUPSClient : public usb_host::USBClient {
   uint8_t hid_interface_{0};
   uint8_t interrupt_ep_{0};
   uint16_t interrupt_mps_{0};
-  // An IN transfer must be a whole number of packets, and must be able to hold
-  // the largest report: a shorter one splits it and the tail reads as garbage.
-  uint16_t interrupt_len_{0};
   uint32_t last_push_sample_{0};
   bool usb_suspended_{false};
   // Claimed by exchange: the USB task re-arms from the transfer callback and
