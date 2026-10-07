@@ -83,6 +83,12 @@ class QxUPSClient : public usb_host::USBClient {
   void set_flag_sensor(Flag f, binary_sensor::BinarySensor *s) { this->flag_sensors_[f] = s; }
   void set_text_sensor(Text t, text_sensor::TextSensor *s) { this->text_sensors_[t] = s; }
   void set_status_interval(uint32_t ms) { this->status_interval_ = ms; }
+
+  // The IDF USB host ISR lives in flash and has no IRAM option, so it cannot
+  // run while a flash erase has the cache off. A transfer completing in that
+  // window makes the DWC driver assert. Callers must quiesce USB first.
+  void suspend_usb();
+  void resume_usb();
   void set_reply_timeout(uint32_t ms) { this->reply_timeout_ = ms; }
   void set_nominal_power(float watts) { this->nominal_power_ = watts; }
   void set_battery_voltage_range(float low, float high) {
@@ -117,6 +123,7 @@ class QxUPSClient : public usb_host::USBClient {
   uint8_t interrupt_ep_{0};
   uint16_t interrupt_mps_{0};
   bool interface_claimed_{false};
+  bool usb_suspended_{false};
   // Claimed by exchange: the USB task re-arms from the transfer callback and
   // the main loop recovers a lost subscription, and both must not submit.
   std::atomic<bool> interrupt_pending_{false};

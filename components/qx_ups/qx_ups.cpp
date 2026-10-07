@@ -17,6 +17,9 @@ namespace esphome::qx_ups {
 
 static const char *const TAG = "qx_ups";
 
+// How long suspend_usb() waits for an in-flight command to land.
+static constexpr uint32_t SUSPEND_DRAIN_TIMEOUT = 50;
+
 // On removal the stack completes the outstanding transfer before the client is
 // told the device is gone, so these two statuses mean the pipe is already down
 // and there is nothing left to re-arm.
@@ -117,6 +120,35 @@ bool QxUPSClient::discover_hid_interface_() {
 
 // CALLER CONTEXT: main loop only. usb_host_endpoint_clear() blocks, so it must
 // never run in the transfer callback's task.
+void QxUPSClient::suspend_usb() {
+  this->usb_suspended_ = true;
+  if (!this->interface_claimed_ || this->interrupt_ep_ == 0)
+    return;
+
+  // Halt stops the controller touching this endpoint; flush cancels what is
+  // queued, which completes the armed transfer as CANCELED so nothing re-arms.
+  usb_host_endpoint_halt(this->device_handle_, this->interrupt_ep_);
+  usb_host_endpoint_flush(this->device_handle_, this->interrupt_ep_);
+
+  // A command already on the wire would still complete during the erase, so
+  // wait it out rather than hope it lands first.
+  const uint32_t deadline = millis() + SUSPEND_DRAIN_TIMEOUT;
+  while (this->in_flight_ != CMD_NONE && millis() < deadline) {
+  }
+  this->in_flight_ = CMD_NONE;
+  ESP_LOGI(TAG, "USB quiesced: the host ISR cannot run while flash is erased");
+}
+
+void QxUPSClient::resume_usb() {
+  this->usb_suspended_ = false;
+  if (!this->interface_claimed_ || this->interrupt_ep_ == 0)
+    return;
+  usb_host_endpoint_clear(this->device_handle_, this->interrupt_ep_);
+  this->interrupt_pending_ = false;
+  this->start_interrupt_in_();
+  ESP_LOGI(TAG, "USB resumed");
+}
+
 void QxUPSClient::recover_interrupt_() {
   const uint16_t code = this->interrupt_fault_code_;
   this->interrupt_faults_++;
@@ -139,7 +171,7 @@ void QxUPSClient::recover_interrupt_() {
 void QxUPSClient::start_interrupt_in_() {
   // Claim the subscription before submitting, so the USB task re-arming from a
   // callback and the main loop recovering a lost one cannot both submit.
-  if (this->interrupt_ep_ == 0 || this->interrupt_pending_.exchange(true))
+  if (this->usb_suspended_ || this->interrupt_ep_ == 0 || this->interrupt_pending_.exchange(true))
     return;
 
   const bool submitted = this->transfer_in(
@@ -235,7 +267,7 @@ void QxUPSClient::send_next_chunk_() {
 
 void QxUPSClient::loop() {
   const bool had_events = this->process_usb_events_();
-  if (this->state_ != usb_host::USB_CLIENT_CONNECTED || this->interrupt_ep_ == 0) {
+  if (this->usb_suspended_ || this->state_ != usb_host::USB_CLIENT_CONNECTED || this->interrupt_ep_ == 0) {
     if (!had_events)
       this->disable_loop();
     return;

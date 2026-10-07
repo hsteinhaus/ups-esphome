@@ -43,7 +43,19 @@ api:
 ota:
   - platform: esphome
     password: !secret ota_password
+    on_begin:
+      # The IDF USB host ISR is flash-resident with no IRAM option, so a
+      # transfer completing during the erase makes its driver assert.
+      - lambda: 'id(ups).suspend_usb();'
+    on_error:
+      - lambda: 'id(ups).resume_usb();'
   - platform: web_server
+    on_begin:
+      # The IDF USB host ISR is flash-resident with no IRAM option, so a
+      # transfer completing during the erase makes its driver assert.
+      - lambda: 'id(ups).suspend_usb();'
+    on_error:
+      - lambda: 'id(ups).resume_usb();'
 
 web_server:
   port: 80

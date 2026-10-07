@@ -5,6 +5,7 @@
     defined(USE_ESP32_VARIANT_ESP32S31) || defined(USE_ESP32_VARIANT_ESP32H4)
 
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include <cmath>
 #include <cstring>
@@ -12,6 +13,11 @@
 namespace esphome::apc_ups {
 
 static const char *const TAG = "apc_ups";
+
+// How often one raw input report is logged, as a sample rather than a stream.
+static constexpr uint32_t PUSH_SAMPLE_INTERVAL = 60000;
+// How long suspend_usb() waits for an in-flight control transfer to land.
+static constexpr uint32_t SUSPEND_DRAIN_TIMEOUT = 50;
 
 // On removal the stack completes the outstanding transfer before the client is
 // told the device is gone, so these two statuses mean the pipe is already down
@@ -292,6 +298,36 @@ void APCUPSClient::bind_fields_() {
 
 // CALLER CONTEXT: main loop only. usb_host_endpoint_clear() blocks, so it must
 // never run in the transfer callback's task.
+void APCUPSClient::suspend_usb() {
+  this->usb_suspended_ = true;
+  if (!this->interface_claimed_ || this->interrupt_ep_ == 0)
+    return;
+
+  // Halt stops the controller touching this endpoint; flush cancels what is
+  // queued, which completes the armed transfer as CANCELED so nothing re-arms.
+  usb_host_endpoint_halt(this->device_handle_, this->interrupt_ep_);
+  usb_host_endpoint_flush(this->device_handle_, this->interrupt_ep_);
+
+  // A control transfer already on the wire would still complete during the
+  // erase, so wait it out rather than hope it lands first.
+  const uint32_t deadline = millis() + SUSPEND_DRAIN_TIMEOUT;
+  while (this->poll_in_flight_ && millis() < deadline) {
+  }
+  if (this->poll_in_flight_)
+    ESP_LOGW(TAG, "a control transfer was still outstanding after %ums", SUSPEND_DRAIN_TIMEOUT);
+  ESP_LOGI(TAG, "USB quiesced: the host ISR cannot run while flash is erased");
+}
+
+void APCUPSClient::resume_usb() {
+  this->usb_suspended_ = false;
+  if (!this->interface_claimed_ || this->interrupt_ep_ == 0)
+    return;
+  usb_host_endpoint_clear(this->device_handle_, this->interrupt_ep_);
+  this->interrupt_pending_ = false;
+  this->start_interrupt_in_();
+  ESP_LOGI(TAG, "USB resumed");
+}
+
 void APCUPSClient::recover_interrupt_() {
   const uint16_t code = this->interrupt_fault_code_;
   this->interrupt_faults_++;
@@ -311,10 +347,30 @@ void APCUPSClient::recover_interrupt_() {
   this->start_interrupt_in_();
 }
 
+// The largest input report the descriptor declares, rounded up to whole
+// packets. Reading only one packet would split a longer report, and its tail
+// would decode as a report of its own.
+void APCUPSClient::size_interrupt_transfer_() {
+  uint16_t longest = 0;
+  for (int i = 0; i < this->map_.count; i++) {
+    const hid_pdc_field_t &f = this->map_.fields[i];
+    if (f.report_type != HID_PDC_INPUT)
+      continue;
+    // +1 for the report id byte the device sends ahead of the payload.
+    const uint16_t bytes = 1 + static_cast<uint16_t>((f.bit_offset + f.bit_size + 7) / 8);
+    longest = std::max(longest, bytes);
+  }
+
+  const uint16_t packets = longest == 0 ? 1 : (longest + this->interrupt_mps_ - 1) / this->interrupt_mps_;
+  this->interrupt_len_ = std::min<uint16_t>(packets * this->interrupt_mps_, usb_host::USB_MAX_PACKET_SIZE);
+  ESP_LOGI(TAG, "interrupt 0x%02X mps %u, longest input report %u, reading %u", this->interrupt_ep_,
+           this->interrupt_mps_, longest, this->interrupt_len_);
+}
+
 void APCUPSClient::start_interrupt_in_() {
   // Claim the subscription before submitting, so the USB task re-arming from a
   // callback and the main loop recovering a lost one cannot both submit.
-  if (this->interrupt_ep_ == 0 || this->interrupt_pending_.exchange(true))
+  if (this->usb_suspended_ || this->interrupt_ep_ == 0 || this->interrupt_pending_.exchange(true))
     return;
 
   const bool submitted = this->transfer_in(
@@ -338,14 +394,21 @@ void APCUPSClient::start_interrupt_in_() {
         if (status.data_len >= 2) {
           // VERBOSE, not DEBUG: this fires several times a second and drowns
           // everything else. It is the proof the endpoint delivers, so it stays.
-          ESP_LOGV(TAG, "push report 0x%02X (%u bytes)", status.data[0], status.data_len);
+          // One sample a minute at INFO. Enumeration happens before any log
+          // client can attach, so a line logged only at connect is unreadable.
+          const uint32_t now = millis();
+          if (now - this->last_push_sample_ >= PUSH_SAMPLE_INTERVAL) {
+            this->last_push_sample_ = now;
+            ESP_LOGI(TAG, "push 0x%02X (%u of %u bytes) %s", status.data[0], status.data_len, this->interrupt_len_,
+                     format_hex_pretty(status.data, status.data_len).c_str());
+          }
           this->decode_report_(HID_PDC_INPUT, status.data[0], status.data + 1, status.data_len - 1);
         }
         // Re-arm at once rather than waiting for the next loop: a status change
         // arriving between the two would otherwise be lost.
         this->start_interrupt_in_();
       },
-      this->interrupt_mps_);
+      this->interrupt_len_);
 
   if (!submitted) {
     // The subscription is gone until something resubmits, so let loop() retry
@@ -474,6 +537,7 @@ void APCUPSClient::loop() {
              this->map_.has_power_page, this->map_.uses_report_ids, this->map_.truncated);
 
     this->bind_fields_();
+    this->size_interrupt_transfer_();
     this->start_interrupt_in_();
     this->start_poll_cycle_(true, true);
     this->last_poll_ = this->last_status_poll_ = millis();
@@ -486,7 +550,7 @@ void APCUPSClient::loop() {
     did_work = true;
   }
 
-  if (this->bound_) {
+  if (this->bound_ && !this->usb_suspended_) {
     const uint32_t now = millis();
     if (this->interrupt_halted_.exchange(false)) {
       this->recover_interrupt_();

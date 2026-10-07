@@ -59,6 +59,12 @@ class APCUPSClient : public usb_host::USBClient {
   void set_poll_interval(uint32_t ms) { this->poll_interval_ = ms; }
   void set_status_interval(uint32_t ms) { this->status_interval_ = ms; }
 
+  // The IDF USB host ISR lives in flash and has no IRAM option, so it cannot
+  // run while a flash erase has the cache off. A transfer completing in that
+  // window makes the DWC driver assert. Callers must quiesce USB first.
+  void suspend_usb();
+  void resume_usb();
+
  protected:
   void on_connected() override;
   void on_disconnected() override;
@@ -68,6 +74,7 @@ class APCUPSClient : public usb_host::USBClient {
   void bind_fields_();
   void start_interrupt_in_();
   void recover_interrupt_();
+  void size_interrupt_transfer_();
   void start_poll_cycle_(bool include_status, bool include_metrics);
   void poll_next_();
   bool constants_pending_() const;
@@ -121,6 +128,11 @@ class APCUPSClient : public usb_host::USBClient {
   uint8_t hid_interface_{0};
   uint8_t interrupt_ep_{0};
   uint16_t interrupt_mps_{0};
+  // An IN transfer must be a whole number of packets, and must be able to hold
+  // the largest report: a shorter one splits it and the tail reads as garbage.
+  uint16_t interrupt_len_{0};
+  uint32_t last_push_sample_{0};
+  bool usb_suspended_{false};
   // Claimed by exchange: the USB task re-arms from the transfer callback and
   // the main loop recovers a lost subscription, and both must not submit.
   std::atomic<bool> interrupt_pending_{false};
