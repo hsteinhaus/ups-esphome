@@ -17,6 +17,14 @@ namespace esphome::qx_ups {
 
 static const char *const TAG = "qx_ups";
 
+// On removal the stack completes the outstanding transfer before the client is
+// told the device is gone, so these two statuses mean the pipe is already down
+// and there is nothing left to re-arm.
+static bool pipe_gone(const usb_host::TransferStatus &status) {
+  return status.error_code == USB_TRANSFER_STATUS_NO_DEVICE ||
+         status.error_code == USB_TRANSFER_STATUS_CANCELED;
+}
+
 // HID class request, as used by every Cypress-style bridge: the command goes
 // out as output report 0 over the control pipe, because the bridge has no
 // interrupt OUT endpoint.
@@ -137,7 +145,8 @@ void QxUPSClient::start_interrupt_in_() {
         // and an empty buffer is why a stale reply can never be read as the
         // next command's answer -- the desync NUT has to drain for.
         this->interrupt_pending_ = false;
-        this->start_interrupt_in_();
+        if (!pipe_gone(status))
+          this->start_interrupt_in_();
       },
       this->interrupt_mps_);
 

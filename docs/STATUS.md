@@ -249,6 +249,13 @@ retries, and status owns everything afterwards.
    confirmed against the device, but no transition has been observed: the
    `utility fail` bit, the latched input fault voltage and the discharge curve
    are still only as good as the protocol says.
+3. **Why the APC board's UPS disconnected once on 2026-10-07.** At uptime
+   2315 s the device vanished from the bus and re-enumerated; the board did not
+   reboot and ran 1 h 42 min afterwards reading normally. The log shows a clean
+   teardown (`Device gone`, then `Event flags 2X` = `ALL_FREE`) with no VBUS
+   event and no commanded power cycle, so nothing points at the board. A
+   spontaneous re-enumeration by the UPS and a contact glitch on the Y splitter
+   look identical from here. One occurrence in 2 h 20 min; unexplained.
 
 ## Upstream bugs found
 

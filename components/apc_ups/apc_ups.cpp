@@ -13,6 +13,14 @@ namespace esphome::apc_ups {
 
 static const char *const TAG = "apc_ups";
 
+// On removal the stack completes the outstanding transfer before the client is
+// told the device is gone, so these two statuses mean the pipe is already down
+// and there is nothing left to re-arm.
+static bool pipe_gone(const usb_host::TransferStatus &status) {
+  return status.error_code == USB_TRANSFER_STATUS_NO_DEVICE ||
+         status.error_code == USB_TRANSFER_STATUS_CANCELED;
+}
+
 // GET_DESCRIPTOR(HID report): standard IN request on the interface, descriptor
 // type 0x22 in the high byte of wValue.
 static constexpr uint8_t REQ_GET_DESCRIPTOR = 0x06;
@@ -298,7 +306,8 @@ void APCUPSClient::start_interrupt_in_() {
         // Re-arm at once rather than waiting for the next loop: a status change
         // arriving between the two would otherwise be lost.
         this->interrupt_pending_ = false;
-        this->start_interrupt_in_();
+        if (!pipe_gone(status))
+          this->start_interrupt_in_();
       },
       this->interrupt_mps_);
 
