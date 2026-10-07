@@ -40,8 +40,10 @@ static constexpr size_t CHUNK = 8;
 static const char *const COMMAND_TEXT[] = {nullptr, "Q1", "F", "I"};
 
 void QxUPSClient::on_connected() {
-  if (this->disconnected_at_ != 0)
-    ESP_LOGW(TAG, "bridge reconnected %ums after it went away", millis() - this->disconnected_at_);
+  if (this->disconnected_at_ != 0) {
+    this->last_reconnect_gap_ = millis() - this->disconnected_at_;
+    ESP_LOGW(TAG, "bridge reconnected %ums after it went away", this->last_reconnect_gap_);
+  }
   ESP_LOGI(TAG, "UPS bridge connected");
   this->interrupt_ep_ = 0;
   this->interrupt_pending_ = false;
@@ -75,6 +77,7 @@ void QxUPSClient::on_connected() {
 void QxUPSClient::on_disconnected() {
   ESP_LOGI(TAG, "UPS bridge disconnected");
   this->disconnected_at_ = millis();
+  this->usb_disconnects_++;
   if (this->interface_claimed_) {
     usb_host_interface_release(this->handle_, this->device_handle_, this->hid_interface_);
     this->interface_claimed_ = false;

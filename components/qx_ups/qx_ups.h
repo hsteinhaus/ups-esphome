@@ -89,6 +89,13 @@ class QxUPSClient : public usb_host::USBClient {
   // window makes the DWC driver assert. Callers must quiesce USB first.
   void suspend_usb();
   void resume_usb();
+
+  // Read by template sensors so a fault survives without a log client: the
+  // reconnect gap is what tells a port error from a real disconnect, and it is
+  // useless if only a log nobody captured ever saw it.
+  uint32_t usb_disconnects() const { return this->usb_disconnects_; }
+  uint32_t last_reconnect_gap() const { return this->last_reconnect_gap_; }
+  uint32_t interrupt_faults() const { return this->interrupt_faults_; }
   void set_reply_timeout(uint32_t ms) { this->reply_timeout_ = ms; }
   void set_nominal_power(float watts) { this->nominal_power_ = watts; }
   void set_battery_voltage_range(float low, float high) {
@@ -134,6 +141,8 @@ class QxUPSClient : public usb_host::USBClient {
   // A port error recovers a still-attached device in a few hundred ms; a
   // real disconnect takes as long as the cable does. The gap tells them apart.
   uint32_t disconnected_at_{0};
+  uint32_t usb_disconnects_{0};
+  uint32_t last_reconnect_gap_{0};
   std::atomic<uint16_t> interrupt_fault_code_{0};
   uint32_t interrupt_faults_{0};
 

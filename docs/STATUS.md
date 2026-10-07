@@ -257,7 +257,10 @@ retries, and status owns everything afterwards.
    That is a strong lead, not a proof: nothing in the log ties that particular
    teardown to a flash write. The reconnect gap now logged will classify the
    next one -- a port error re-enumerates a still-attached device in a few
-   hundred ms, a real disconnect takes as long as the cable does.
+   hundred ms, a real disconnect takes as long as the cable does. Both boards
+   publish `USB Disconnects`, `USB Reconnect Gap` and `USB Interrupt Faults` as
+   diagnostic sensors, so Home Assistant records the evidence whether or not a
+   log client happened to be attached.
 
 ## The USB host ISR cannot survive a flash erase
 

@@ -137,8 +137,10 @@ bool APCUPSClient::discover_hid_interface_() {
 }
 
 void APCUPSClient::on_connected() {
-  if (this->disconnected_at_ != 0)
-    ESP_LOGW(TAG, "UPS reconnected %ums after it went away", millis() - this->disconnected_at_);
+  if (this->disconnected_at_ != 0) {
+    this->last_reconnect_gap_ = millis() - this->disconnected_at_;
+    ESP_LOGW(TAG, "UPS reconnected %ums after it went away", this->last_reconnect_gap_);
+  }
   ESP_LOGI(TAG, "UPS connected, requesting HID report descriptor");
   this->bound_ = false;
   this->log_index_ = -1;
@@ -171,6 +173,7 @@ void APCUPSClient::on_connected() {
 void APCUPSClient::on_disconnected() {
   ESP_LOGI(TAG, "UPS disconnected");
   this->disconnected_at_ = millis();
+  this->usb_disconnects_++;
   this->bound_ = false;
   this->log_index_ = -1;
   this->descriptor_ready_ = false;

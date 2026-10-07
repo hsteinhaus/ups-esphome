@@ -111,6 +111,39 @@ text_sensor:
         sorting_group_id: group_board
 
 sensor:
+  # Recorded by Home Assistant so a teardown that happens unattended leaves
+  # evidence. The gap is the discriminator: a few hundred ms means the port was
+  # reset with the device still attached, seconds means it really went away.
+  - platform: template
+    name: "USB Disconnects"
+    id: usb_disconnects
+    entity_category: diagnostic
+    icon: "mdi:usb-port"
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: "return id(ups).usb_disconnects();"
+    web_server:
+      sorting_group_id: group_board
+  - platform: template
+    name: "USB Reconnect Gap"
+    id: usb_reconnect_gap
+    entity_category: diagnostic
+    unit_of_measurement: ms
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: "return id(ups).last_reconnect_gap();"
+    web_server:
+      sorting_group_id: group_board
+  - platform: template
+    name: "USB Interrupt Faults"
+    id: usb_interrupt_faults
+    entity_category: diagnostic
+    icon: "mdi:alert-circle-outline"
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: "return id(ups).interrupt_faults();"
+    web_server:
+      sorting_group_id: group_board
   - platform: apc_ups
     battery_level:
       name: "UPS Battery Level"
