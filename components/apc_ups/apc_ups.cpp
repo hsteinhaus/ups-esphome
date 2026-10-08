@@ -171,7 +171,7 @@ void APCUPSClient::on_connected() {
 }
 
 void APCUPSClient::on_disconnected() {
-  ESP_LOGI(TAG, "UPS disconnected");
+  ESP_LOGW(TAG, "UPS disconnected");
   this->disconnected_at_ = millis();
   this->usb_disconnects_++;
   this->bound_ = false;
@@ -317,7 +317,8 @@ void APCUPSClient::suspend_usb() {
   while (this->poll_in_flight_ && millis() < deadline) {
   }
   if (this->poll_in_flight_)
-    ESP_LOGW(TAG, "a control transfer was still outstanding after %ums", SUSPEND_DRAIN_TIMEOUT);
+    ESP_LOGW(TAG, "control transfer still outstanding after %ums; the erase may land on it and panic",
+             SUSPEND_DRAIN_TIMEOUT);
   ESP_LOGI(TAG, "USB quiesced: the host ISR cannot run while flash is erased");
 }
 
@@ -424,7 +425,7 @@ void APCUPSClient::start_interrupt_in_() {
                      format_hex_pretty(status.data, status.data_len).c_str());
           } else if (millis() - this->last_push_sample_ >= PUSH_SAMPLE_INTERVAL) {
             this->last_push_sample_ = millis();
-            ESP_LOGI(TAG, "push %u bytes, %u reports (mps %u) %s", status.data_len, reports,
+            ESP_LOGD(TAG, "push %u bytes, %u reports (mps %u) %s", status.data_len, reports,
                      this->interrupt_mps_, format_hex_pretty(status.data, status.data_len).c_str());
           }
         }
@@ -485,6 +486,15 @@ void APCUPSClient::poll_next_() {
       // CALLBACK CONTEXT: USB task. It clears the flag and nothing else; the
       // main loop owns the cursor, so a cycle replaced mid-flight stays sane.
       [this, report_id](const usb_host::TransferStatus &status) {
+        if (!status.success) {
+          // Recoverable: loop() asks again. Silence here froze the sensor at
+          // its last value with nothing to show why.
+          this->poll_failures_++;
+          if (this->poll_failures_ <= 5 || this->poll_failures_ % 100 == 0) {
+            ESP_LOGW(TAG, "feature report 0x%02X failed, transfer status %u (failure %u)", report_id,
+                     status.error_code, this->poll_failures_);
+          }
+        }
         if (status.success && status.data_len > SETUP_PACKET_SIZE) {
           const uint8_t *body = status.data + SETUP_PACKET_SIZE;
           size_t body_len = status.data_len - SETUP_PACKET_SIZE;

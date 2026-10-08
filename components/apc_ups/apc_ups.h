@@ -152,6 +152,7 @@ class APCUPSClient : public usb_host::USBClient {
   uint32_t last_reconnect_gap_{0};
   std::atomic<uint16_t> interrupt_fault_code_{0};
   uint32_t interrupt_faults_{0};
+  uint32_t poll_failures_{0};
 
   float last_load_{NAN};
   float last_nominal_power_{NAN};

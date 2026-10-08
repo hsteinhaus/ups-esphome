@@ -61,6 +61,28 @@ USB flashing is unavailable while `usb_host` owns the OTG PHY. Address the
 target only by its `/dev/serial/by-id/` path; `ttyACM*` renumbers between
 boards.
 
+## Logging
+
+Both boards run at `level: INFO`, and in steady state emit nothing at all --
+measured 2 lines in 70 s on each, both the connect banner. Every condition the
+components report is WARN or ERROR, so a real fault is the only thing that
+appears.
+
+`esphome logs` still looks like a flood, and that is the **client**, not the
+board: it subscribes to entity states and renders them itself as `[S][sensor]:
+'...' >> ...` lines (`aioesphomeapi/state_log_formatter.py`). No device log
+level affects them. Use `--no-states` to see only what the board sent:
+
+```sh
+work/venv/bin/esphome logs apc-ups-stick.yaml --device 10.22.10.65 --no-states
+```
+
+Raising a component back to VERBOSE needs the global `level:` raised too, since
+a per-tag level may only be quieter than the global one. `qx_ups` at VERBOSE
+prints every command, its reply and the round-trip time -- how the dialect was
+confirmed -- but that is twice a second for ever, so it is not a normal-ops
+setting.
+
 ## Configs
 
 | File | Purpose |

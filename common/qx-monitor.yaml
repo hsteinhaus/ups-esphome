@@ -5,7 +5,8 @@
 # particular panel.
 
 logger:
-  level: VERBOSE
+  # Normal ops: INFO -- see the note in apc-monitor.yaml.
+  level: INFO
   logs:
     i2c.idf: ERROR
     spi_device: ERROR
@@ -21,11 +22,7 @@ logger:
     web_server_idf: ERROR
     mdns: WARN
     preferences: WARN
-    wifi: INFO
     light: WARN
-    # VERBOSE here prints every command and its reply with the round-trip time,
-    # which is how the dialect gets confirmed against a device we cannot probe.
-    qx_ups: VERBOSE
   # The OTG peripheral owns the PHY, so there is no serial console to log to.
   baud_rate: 0
 

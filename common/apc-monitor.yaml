@@ -6,9 +6,11 @@
 # particular panel.
 
 logger:
-  # Per-tag levels may only be quieter than the global one, so the global stays
-  # VERBOSE (descriptor dumps need it) and the chatty tags are muted by name.
-  level: VERBOSE
+  # Normal ops: INFO. Everything this component reports as a problem is WARN
+  # or ERROR, so a real fault stands out instead of being buried. Per-tag
+  # levels may only be quieter than the global one, so debugging a component
+  # means raising this line and that tag together.
+  level: INFO
   logs:
     i2c.idf: ERROR
     spi_device: ERROR
@@ -26,13 +28,8 @@ logger:
     web_server_idf: ERROR
     mdns: WARN
     preferences: WARN
-    wifi: INFO
-    switch: INFO
-    template.switch: INFO
-    switch.gpio: INFO
     light: WARN
     axp2101: WARN
-    apc_ups: DEBUG
   # The OTG peripheral owns the PHY, so there is no serial console to log to.
   baud_rate: 0
 

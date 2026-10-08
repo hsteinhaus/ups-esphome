@@ -75,7 +75,7 @@ void QxUPSClient::on_connected() {
 }
 
 void QxUPSClient::on_disconnected() {
-  ESP_LOGI(TAG, "UPS bridge disconnected");
+  ESP_LOGW(TAG, "UPS bridge disconnected");
   this->disconnected_at_ = millis();
   this->usb_disconnects_++;
   if (this->interface_claimed_) {
@@ -309,7 +309,9 @@ void QxUPSClient::loop() {
         ESP_LOGW(TAG, "giving up on I; this UPS does not report its identity");
         this->identity_pending_ = false;
       } else if (waiting == CMD_RATINGS && ++this->ratings_tries_ >= MAX_QUERY_TRIES) {
-        ESP_LOGW(TAG, "giving up on F; charge needs an explicit battery voltage range");
+        ESP_LOGE(TAG, "no F rating after %u tries; battery charge is now scaled against a guessed "
+                      "nominal and will be wrong -- set battery_voltage_low/high",
+                 MAX_QUERY_TRIES);
         this->ratings_pending_ = false;
       }
     }
