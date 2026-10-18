@@ -27,6 +27,8 @@ logger:
   baud_rate: 0
 
 api:
+  # Mainly driven from its web UI: no HA client is normal, not a fault.
+  reboot_timeout: 0s
   encryption:
     key: !secret api_key
 
