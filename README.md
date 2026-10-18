@@ -11,7 +11,12 @@ the built-in display. Two UPSes, and they share almost nothing above the wire:
   UPS behind it answers ASCII commands. `qx_ups` tunnels those through 8-byte
   HID reports.
 
-What they do share is the transport work underneath: endpoint discovery from the
+An **Owon SPE6103 lab PSU** (`1a86:7523`) rides along on a third StickS3. It is
+no HID device at all: a CH340 bridge carries SCPI, so `owon_psu` sits on
+ESPHome's `usb_uart` -- vendored, to add the `suspend_usb()` OTA needs -- and
+reads, sets and switches the output.
+
+What the UPSes do share is the transport work underneath: endpoint discovery from the
 configuration descriptor, the interface claim ESPHome's `USBClient` omits, and a
 permanently armed interrupt endpoint.
 
@@ -24,6 +29,8 @@ permanently armed interrupt endpoint.
 | `apc-ups.yaml` | CoreS3 build: board package plus a 320x240 layout |
 | `apc-ups-stick.yaml` | StickS3 build: board package plus a 240x135 layout |
 | `qx-ups-stick.yaml` | Second StickS3, Megatec UPS: board package plus a 240x135 layout |
+| `common/psu-monitor.yaml` | Board-independent half of the PSU monitor: USB host, `usb_uart`, `owon_psu`, all entities |
+| `owon-psu-stick.yaml` | Third StickS3, Owon PSU: board package plus a 240x135 layout |
 | `boards/m5stack-cores3.yaml` | Board package: PMU rails, IO expander, display, touch, USB host power |
 | `boards/m5stick-s3.yaml` | Board package: PMIC, display, buttons -- no USB host power path |
 | `cores3-bringup.yaml` | Stage-1 test config: display, touch and PMU telemetry |

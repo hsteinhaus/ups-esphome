@@ -1,0 +1,65 @@
+# Owon SPE6103 lab PSU monitor and control on a third M5Stack StickS3.
+#
+# The PSU's USB port is a CH340 bridge (1a86:7523) carrying SCPI, not HID, so
+# this shares the board and the deploy tool with the UPS sticks but none of
+# their transport.
+
+substitutions:
+  name: owon-psu-stick
+
+esphome:
+  name: ${name}
+  friendly_name: Owon PSU
+
+packages:
+  board: !include boards/m5stick-s3.yaml
+  monitor: !include common/psu-monitor.yaml
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 15
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 19
+  - file: "gfonts://Roboto"
+    id: font_huge
+    size: 38
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 11
+
+display:
+  - id: !extend lcd
+    lambda: |-
+      it.fill(Color::BLACK);
+
+      if (!id(psu_connected).state) {
+        it.print(8, 46, id(font_title), Color(0xFF, 0xD0, 0x40), "Waiting for PSU");
+        it.printf(7, 110, id(font_small), Color(0x70, 0x70, 0x70), "%s",
+                  id(wifi_ip).state.empty() ? "no wifi" : id(wifi_ip).state.c_str());
+        return;
+      }
+
+      const bool tripped = id(psu_ovp).state || id(psu_ocp).state || id(psu_otp).state;
+      const bool on = id(psu_output).state;
+      const auto accent = tripped ? Color(0xFF, 0x40, 0x40)
+                          : on    ? Color(0x40, 0xC0, 0x60)
+                                  : Color(0x60, 0x60, 0x60);
+
+      it.filled_rectangle(0, 0, it.get_width(), 26, accent);
+      it.printf(7, 1, id(font_title), Color::BLACK, "%s",
+                tripped ? "PROTECTION" : (on ? "OUTPUT ON" : "OUTPUT OFF"));
+      it.printf(it.get_width() - 7, 4, id(font_small), Color::BLACK, TextAlign::TOP_RIGHT, "%s",
+                id(psu_mode).state.c_str());
+
+      it.printf(7, 30, id(font_huge), Color::WHITE, "%.2f", id(psu_voltage).state);
+      it.print(120, 54, id(font_body), Color(0xA0, 0xA0, 0xA0), "V");
+      it.printf(150, 32, id(font_body), Color::WHITE, "%.3f A", id(psu_current).state);
+      it.printf(150, 52, id(font_body), Color(0xA0, 0xA0, 0xA0), "%.2f W", id(psu_power).state);
+
+      it.printf(7, 82, id(font_body), Color(0xA0, 0xA0, 0xA0), "set %.2f V  %.2f A",
+                id(psu_voltage_set).state, id(psu_current_set).state);
+
+      it.printf(7, 110, id(font_small), Color(0x70, 0x70, 0x70), "%s",
+                id(wifi_ip).state.empty() ? "no wifi" : id(wifi_ip).state.c_str());

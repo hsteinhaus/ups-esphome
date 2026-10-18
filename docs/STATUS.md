@@ -263,16 +263,43 @@ not optional -- without it the battery voltage publishes per cell as though it
 were the pack. `I` and `F` now go first and only at startup, with bounded
 retries, and status owns everything afterwards.
 
+## Owon SPE6103 lab PSU
+
+Probed from the host on 2026-10-18 (`*IDN?` -> `OWON,SPE6103,24121050,FV:V5.1.0`).
+Not HID: a CH340 (`1a86:7523`, no USB serial number) carrying SCPI at 115200
+8N1, `\n` out, `\r\n` back. Queries answer in ~55 ms.
+
+- `MEAS:ALL:INFO?` is the whole live state in one round trip:
+  `V,A,W,f1,f2,f3,mode`. Mode `1` is CV; `2` appeared once with a 0 A setpoint
+  and is taken for CC. The three ON/OFF fields are taken for OVP, OCP, OTP in
+  that order -- **inferred, not observed**: open clamps trip none of them.
+- **Sets are never answered, and an out-of-range set is silently ignored**;
+  `SYST:ERR?` stays `0x0000`. Only a read-back says whether it took.
+- The firmware enforces `VOLT <= VOLT:LIM - 1` and `CURR <= CURR:LIM - 0.1`, so
+  order matters: raise a limit before its setpoint, lower it after. A restore
+  sent in the wrong order left the setpoint at 0 A.
+- Current resolves 10 mA (`CURR 0.001` reads back `0.000`).
+- `SYST:STAT?` -> `ERR`. SCPI does not lock the front panel, and the display
+  follows remote sets.
+
+`owon_psu` polls `MEAS:ALL:INFO?` every 500 ms and the settings every 5 s, and
+reads back every set. The output switch never acts on boot. When the API
+connection drops and stays down for `link_loss_timeout` (10 s), the output is
+switched off once; a boot without a client is not a loss.
+
 ## Still open
 
-1. **A mains-loss transition on the StickS3.** The push path is proven on it
+1. **The PSU's protection flags and CC mode against a real load.** See above.
+2. **The PSU stick on hardware.** Built; not yet flashed or run against the
+   PSU, and OTA with `usb_uart` suspended is unproven.
+3. **A mains-loss transition on the StickS3.** The push path is proven on it
    and the firmware is the one validated on the CoreS3, but the event itself
    has not been seen on this board.
-2. **A mains-loss transition on the ABB.** Steady-state readings are all
+4. **A mains-loss transition on the ABB.** Steady-state readings are all
    confirmed against the device, but no transition has been observed: the
    `utility fail` bit, the latched input fault voltage and the discharge curve
    are still only as good as the protocol says.
-3. **Whether the 2026-10-07 teardown was the flash-window fault.** At uptime
+5. **Whether the 2026-10-07 teardown was the flash-window fault.** At uptime
    2315 s the APC board's device vanished and re-enumerated without a reboot.
    The same day, OTA on that board was found to crash in `esp_ota_begin`, root
    caused below, and a port event is the gentler outcome of the same starvation.
