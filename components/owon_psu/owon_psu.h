@@ -163,7 +163,9 @@ class OwonPSU : public Component, public uart::UARTDevice {
   uint32_t command_started_{0};
   uint8_t missed_replies_{0};
   bool connected_{false};
-  bool identity_pending_{true};
+  // Set at start, after any timeout and across a USB gap: see loop().
+  bool resync_{true};
+  std::string serial_;
   bool suspended_{false};
   uint8_t next_read_{0};
 

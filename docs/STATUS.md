@@ -282,6 +282,12 @@ Not HID: a CH340 (`1a86:7523`, no USB serial number) carrying SCPI at 115200
 - After `OUTP ON` or `OUTP OFF` the PSU ignores the next query for up to a
   second. A set therefore goes out once, and only its read-back is repeated:
   resending `OUTP ON` restarted the wait and took 2.7 s to confirm, not 0.5 s.
+- **A reply that misses its timeout answers the next query.** Replies name
+  nothing, so after a USB gap on 2026-10-18 the identity published as
+  `0.000 / OFF` and the voltage read got the `*IDN?` reply. After any timeout,
+  and across any USB gap, the component now resyncs: it asks `*IDN?` and drops
+  every line until that reply -- the only one whose first field is not a
+  number -- comes back.
 - `SYST:STAT?` -> `ERR`. SCPI does not lock the front panel, and the display
   follows remote sets.
 
@@ -297,14 +303,17 @@ switched off once; a boot without a client is not a loss.
    2026-10-18 (10.22.10.83): identity, setpoints, limits, caps and the output
    switch, and OTA with the PSU attached and polling (`USB quiesced`, erase
    survived, polling back within 6 s). The link-loss trip is not yet seen.
-3. **A mains-loss transition on the StickS3.** The push path is proven on it
+3. **The PSU's USB dropped once, unprovoked.** 2026-10-18 11:52:36,
+   `usb_uart: Input transfer failed, status=ERROR`, the CH340 gone for 6 s and
+   back. Cause unknown; nothing was being sent but routine polling.
+4. **A mains-loss transition on the StickS3.** The push path is proven on it
    and the firmware is the one validated on the CoreS3, but the event itself
    has not been seen on this board.
-4. **A mains-loss transition on the ABB.** Steady-state readings are all
+5. **A mains-loss transition on the ABB.** Steady-state readings are all
    confirmed against the device, but no transition has been observed: the
    `utility fail` bit, the latched input fault voltage and the discharge curve
    are still only as good as the protocol says.
-5. **Whether the 2026-10-07 teardown was the flash-window fault.** At uptime
+6. **Whether the 2026-10-07 teardown was the flash-window fault.** At uptime
    2315 s the APC board's device vanished and re-enumerated without a reboot.
    The same day, OTA on that board was found to crash in `esp_ota_begin`, root
    caused below, and a port event is the gentler outcome of the same starvation.

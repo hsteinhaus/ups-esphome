@@ -30,6 +30,17 @@ static const char *const COMMAND_TEXT[] = {
     nullptr, "*IDN?", "MEAS:ALL:INFO?", "VOLT?", "CURR?", "VOLT:LIM?", "CURR:LIM?", "OUTP?",
 };
 
+// Only the *IDN? reply has four fields and a first one that is not a number,
+// so no other reply, however late, can be taken for it.
+static bool is_identity(const char *reply) {
+  int commas = 0;
+  for (const char *p = reply; *p != '\0'; p++)
+    commas += *p == ',';
+  char *end;
+  strtof(reply, &end);
+  return commas == 3 && end == reply;
+}
+
 static Command read_command(Setting s) {
   return static_cast<Command>(static_cast<uint8_t>(CMD_READ_VOLTAGE) + static_cast<uint8_t>(s));
 }
@@ -91,6 +102,7 @@ void OwonPSU::resume_usb() {
   while (this->available() && this->read_byte(&c)) {
   }
   this->rx_len_ = 0;
+  this->resync_ = true;
   this->suspended_ = false;
 }
 
@@ -103,6 +115,7 @@ void OwonPSU::loop() {
   if (!this->usb_channel_->is_connected()) {
     this->in_flight_ = CMD_NONE;
     this->rx_len_ = 0;
+    this->resync_ = true;
     this->set_connected_(false);
     return;
   }
@@ -119,6 +132,13 @@ void OwonPSU::loop() {
     }
     this->rx_buf_[this->rx_len_] = '\0';
     this->rx_len_ = 0;
+    if (this->resync_) {
+      if (this->in_flight_ != CMD_IDENTITY || !is_identity(this->rx_buf_)) {
+        ESP_LOGD(TAG, "resyncing, dropped '%s'", this->rx_buf_);
+        continue;
+      }
+      this->resync_ = false;
+    }
     const Command answered = this->in_flight_;
     this->in_flight_ = CMD_NONE;
     if (answered == CMD_NONE) {
@@ -137,6 +157,15 @@ void OwonPSU::loop() {
     this->in_flight_ = CMD_NONE;
     this->rx_len_ = 0;
     this->on_timeout_(missed);
+  }
+
+  // Replies carry nothing that names their query, so one that arrives after
+  // its timeout would answer the next query instead, and every one after it.
+  // Until the *IDN? reply comes back, nothing else is asked and nothing else
+  // is believed; the PSU answers in order, so pairing holds from there.
+  if (this->resync_) {
+    this->send_query_(CMD_IDENTITY);
+    return;
   }
 
   if (this->connected_) {
@@ -177,11 +206,6 @@ void OwonPSU::loop() {
       }
     }
 
-    if (this->identity_pending_) {
-      this->identity_pending_ = false;
-      this->send_query_(CMD_IDENTITY);
-      return;
-    }
   }
 
   if (now - this->last_status_ >= this->status_interval_) {
@@ -255,6 +279,7 @@ void OwonPSU::on_reply_(Command answered, const char *reply) {
 
 void OwonPSU::on_timeout_(Command missed) {
   ESP_LOGD(TAG, "%s unanswered", COMMAND_TEXT[missed]);
+  this->resync_ = true;
   if (++this->missed_replies_ >= MAX_MISSED_REPLIES)
     this->set_connected_(false);
 }
@@ -274,7 +299,11 @@ void OwonPSU::parse_identity_(const char *reply) {
     return;
   }
   const char *firmware = strncmp(fields[3], "FV:", 3) == 0 ? fields[3] + 3 : fields[3];
-  ESP_LOGI(TAG, "%s %s, serial %s, firmware %s", fields[0], fields[1], fields[2], firmware);
+  // Asked on every resync, so only news is worth INFO.
+  if (this->serial_ != fields[2]) {
+    this->serial_ = fields[2];
+    ESP_LOGI(TAG, "%s %s, serial %s, firmware %s", fields[0], fields[1], fields[2], firmware);
+  }
   this->publish_text_(TEXT_MODEL, std::string(fields[0]) + " " + fields[1]);
   this->publish_text_(TEXT_SERIAL, fields[2]);
   this->publish_text_(TEXT_FIRMWARE, firmware);
@@ -359,8 +388,7 @@ void OwonPSU::set_connected_(bool connected) {
   this->publish_flag_(FLAG_CONNECTED, connected);
   if (connected) {
     ESP_LOGI(TAG, "PSU answering");
-    // Possibly a different unit: ask again, and read every setting now.
-    this->identity_pending_ = true;
+    // Read every setting now; the resync already asked who this is.
     this->next_read_ = 0;
     this->last_settings_ = millis();
     return;
