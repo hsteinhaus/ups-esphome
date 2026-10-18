@@ -21,6 +21,7 @@ Usage: tools/sticks3_deploy.py <config.yaml> [--timeout S] [--subnet 10.22.10]
 import argparse
 import glob
 import json
+import os
 import re
 import socket
 import subprocess
@@ -35,9 +36,13 @@ import serial
 BY_ID = "/dev/serial/by-id/"
 APP_MATCH = "StickS3"
 PROMPT = b">>>"
+# The ROM's own USB-Serial-JTAG port. Matching "anything but the app port"
+# also matched every other serial device on the host, CoreS3 included.
+ROM_MATCH = "Espressif_USB_JTAG"
 ROM_WAIT = 120
-ESPHOME = "work/venv/bin/esphome"
-ESPTOOL = "work/venv/bin/esptool"
+# Overridable: the venv under work/ is built inside the container.
+ESPHOME = os.environ.get("ESPHOME", "work/venv/bin/esphome")
+ESPTOOL = os.environ.get("ESPTOOL", "work/venv/bin/esptool")
 # Keyed by entity NAME ("Status"), not by the YAML id -- the two differ, and
 # using the id matches nothing, which reads exactly like an absent device.
 STATUS_ENTITY = "binary_sensor/status"
@@ -55,7 +60,7 @@ def ports(match=""):
 
 
 def rom_ports():
-    return [p for p in ports() if APP_MATCH not in p]
+    return [p for p in ports(ROM_MATCH) if APP_MATCH not in p]
 
 
 def wait_until(fn, timeout, settle=0.0):
@@ -105,8 +110,13 @@ def read_mac(port):
     return found.group(1).lower() if found else None
 
 
-def flash(config, timeout, allow_reset):
-    if rom := (rom_ports() or [None])[0]:
+def flash(config, timeout, allow_reset, port=None):
+    # Another ESP32 on the bus answers ROM_MATCH just the same, and only the
+    # MAC in its name tells them apart; never guess between two.
+    roms = [port] if port else rom_ports()
+    if len(roms) > 1:
+        return f"several ESP32 ports ({', '.join(roms)}); pass --port", None
+    if rom := (roms or [None])[0]:
         log(f"already in download mode at {rom}")
     else:
         log(f"waiting up to {timeout:.0f}s for a port")
@@ -232,14 +242,14 @@ def capture_log(config, host, seconds=35):
             else (expired.stdout or "")
 
 
-def verify(config, host):
+def verify(config, host, wired_entity):
     """Each check is something that silently breaks on a new board."""
     results = []
 
     entities = {
         "status binary sensor": f"/{STATUS_ENTITY}",
         "backlight (display stack built)": "/light/backlight",
-        "UPS load sensor (component wired)": "/sensor/ups_load",
+        f"{wired_entity} (component wired)": f"/{wired_entity}",
     }
     for label, path in entities.items():
         results.append((label, probe(host, path) is not None))
@@ -267,11 +277,14 @@ def main():
     parser.add_argument("--skip-flash", action="store_true")
     parser.add_argument("--host", help="skip discovery and verify this address")
     parser.add_argument("--identify", help="entity path unique to this board, e.g. binary_sensor/button_a")
+    parser.add_argument("--port", help="by-id path of the board in download mode")
+    parser.add_argument("--wired-entity", default="sensor/ups_load",
+                        help="entity path that exists only if the device component is wired")
     args = parser.parse_args()
 
     mac = None
     if not args.skip_flash:
-        problem, mac = flash(args.config, args.timeout, not args.no_reset)
+        problem, mac = flash(args.config, args.timeout, not args.no_reset, args.port)
         if problem:
             sys.exit(f"FLASH FAILED: {problem}")
         log("flash complete; waiting for the board to join")
@@ -294,7 +307,7 @@ def main():
         host = hosts[0]
     log(f"device at {host}" + (f" (MAC {mac} confirmed)" if mac and not args.host else ""))
 
-    results = verify(args.config, host)
+    results = verify(args.config, host, args.wired_entity)
     width = max(len(label) for label, _ in results)
     for label, ok in results:
         print(f"  {'PASS' if ok else 'FAIL'}  {label:<{width}}", flush=True)
