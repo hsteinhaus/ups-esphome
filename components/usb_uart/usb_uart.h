@@ -194,6 +194,12 @@ class USBUartComponent : public usb_host::USBClient {
   void start_input(USBUartChannel *channel);
   void start_output(USBUartChannel *channel);
 
+  // The IDF USB host ISR lives in flash and has no IRAM option, so it cannot
+  // run while a flash erase has the cache off. A transfer completing in that
+  // window makes the DWC driver assert. Callers must quiesce USB first.
+  void suspend_usb();
+  void resume_usb();
+
   // Lock-free data transfer from USB task to main loop
   static constexpr int USB_DATA_QUEUE_SIZE = 32;
   LockFreeQueue<UsbDataChunk, USB_DATA_QUEUE_SIZE> usb_data_queue_;
@@ -202,6 +208,8 @@ class USBUartComponent : public usb_host::USBClient {
 
  protected:
   std::vector<USBUartChannel *> channels_{};
+  // Checked by both restart paths, which run on the USB task and the main loop.
+  std::atomic<bool> suspended_{false};
 };
 
 class USBUartTypeCdcAcm : public USBUartComponent {

@@ -270,7 +270,7 @@ void USBUartComponent::dump_config() {
   }
 }
 void USBUartComponent::start_input(USBUartChannel *channel) {
-  if (!channel->initialised_.load())
+  if (!channel->initialised_.load() || this->suspended_.load())
     return;
   // THREAD CONTEXT: Called from both USB task and main loop threads
   // - USB task: Immediate restart after successful transfer for continuous data flow
@@ -346,6 +346,8 @@ void USBUartComponent::start_output(USBUartChannel *channel) {
 
   // Atomically claim the "output in progress" flag. If already set, another thread
   // is handling the transfer; return immediately.
+  if (this->suspended_.load())
+    return;
   bool expected = false;
   if (!channel->output_started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
     return;
@@ -383,6 +385,42 @@ void USBUartComponent::start_output(USBUartChannel *channel) {
     return;
   }
   ESP_LOGV(TAG, "Output %u bytes started", len);
+}
+
+void USBUartComponent::suspend_usb() {
+  this->suspended_.store(true);
+  // Both data pipes are bulk, so halting them is synchronous and stops the
+  // controller touching them; flush completes what is queued as CANCELED, and
+  // the callbacks see suspended_ and do not re-arm. A submit racing the halt is
+  // refused by the halted pipe. Nothing is left to land.
+  for (auto *channel : this->channels_) {
+    if (!channel->initialised_.load())
+      continue;
+    for (const auto *ep : {channel->cdc_dev_.in_ep, channel->cdc_dev_.out_ep}) {
+      if (ep == nullptr)
+        continue;
+      usb_host_endpoint_halt(this->device_handle_, ep->bEndpointAddress);
+      usb_host_endpoint_flush(this->device_handle_, ep->bEndpointAddress);
+    }
+  }
+  ESP_LOGI(TAG, "USB quiesced: the host ISR cannot run while flash is erased");
+}
+
+void USBUartComponent::resume_usb() {
+  this->suspended_.store(false);
+  for (auto *channel : this->channels_) {
+    if (!channel->initialised_.load())
+      continue;
+    for (const auto *ep : {channel->cdc_dev_.in_ep, channel->cdc_dev_.out_ep}) {
+      if (ep != nullptr)
+        usb_host_endpoint_clear(this->device_handle_, ep->bEndpointAddress);
+    }
+    channel->input_started_.store(false);
+    channel->output_started_.store(false);
+    this->start_input(channel);
+    this->start_output(channel);
+  }
+  ESP_LOGI(TAG, "USB resumed");
 }
 
 /**
