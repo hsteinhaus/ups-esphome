@@ -16,7 +16,8 @@ Side button, per M5Stack: single click powers on or resets, double click powers
 off, long press enters download mode with the green LED flashing.
 
 Usage: tools/sticks3_deploy.py <config.yaml> [--timeout S] [--subnet 10.22.10]
-                               [--no-reset] [--skip-flash]
+                               [--no-reset] [--skip-flash] [--host IP]
+                               [--port BY_ID] [--wired-entity PATH]
 """
 import argparse
 import glob

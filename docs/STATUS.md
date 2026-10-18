@@ -2,9 +2,10 @@
 
 Stage 1 (board bring-up), stage 2 (UPS monitoring) and stage 3 (the move to a
 StickS3) are complete and verified against the real BX950MI. Stage 4, a second
-UPS speaking a different protocol, is built and running on a second StickS3 but
-has not yet met its UPS. Everything below is fact established on hardware
-unless it says otherwise.
+UPS speaking a different protocol, runs on a second StickS3 against the ABB.
+Stage 5, an Owon SPE6103 lab PSU read and controlled over SCPI, runs on a third
+StickS3. Everything below is fact established on hardware unless it says
+otherwise.
 
 ## Where things are
 
@@ -17,9 +18,14 @@ unless it says otherwise.
   running `apc-ups-stick.yaml` against the BX950MI.
 - Device: `10.22.10.66`, MAC `14:c1:9f:d5:da:d8`, hostname `qx-ups-stick`,
   running `qx-ups-stick.yaml` against an ABB PowerValue 11 RT G2 1 kVA.
+- Device: `10.22.10.83`, MAC `ac:27:6e:d2:60:4c`, hostname `owon-psu-stick`,
+  running `owon-psu-stick.yaml` against the Owon SPE6103.
   The CoreS3 was disconnected on 2026-10-06; `apc-ups.yaml` is kept working but
   is no longer deployed.
-- Toolchain: `work/venv/bin/esphome` (2026.6.5), gitignored, on the mount.
+- Toolchain: `work/venv/bin/esphome` (2026.6.5), gitignored, on the mount. It
+  is built inside the container and does not run on the host; there,
+  `work/venv-host` holds the same ESPHome 2026.6.5 (`uv venv --python 3.13`).
+  The deploy tool takes the pair from `ESPHOME` / `ESPTOOL`.
 - The secrets file is user-owned. Never read, write or echo it.
 
 ## Building and flashing
@@ -32,8 +38,13 @@ work/venv/bin/python tools/sticks3_deploy.py apc-ups-stick.yaml \
     --skip-flash --host 10.22.10.65                                   # verify only
 ```
 
-The second board is the same, with `qx-ups-stick.yaml` and `10.22.10.66`. Its
-parser has host-side tests that need no hardware:
+The second board is the same, with `qx-ups-stick.yaml` and `10.22.10.66`; the
+third with `owon-psu-stick.yaml`, `10.22.10.83` and
+`--wired-entity sensor/psu_voltage`, since the tool's default entity is a UPS
+one. With another ESP32 on the bus -- the CoreS3 on the dev host -- the tool
+refuses to guess which port is the ROM; pass `--port /dev/serial/by-id/...`.
+
+The Megatec parser has host-side tests that need no hardware:
 
 ```sh
 g++ -std=c++17 -Wall -Wextra -Werror -o work/qx_protocol_test \
@@ -56,6 +67,8 @@ work/venv/bin/python -m virtualenv ~/.platformio/penv
 
 Push with `git -c credential.helper='!gh auth git-credential' push origin master`
 -- `~/.gitconfig` is locked in this container, so `gh auth setup-git` fails.
+On the host, HTTPS has no git credential; SSH works:
+`git push git@github.com:hsteinhaus/ups-esphome.git <branch>`.
 
 USB flashing is unavailable while `usb_host` owns the OTG PHY. Address the
 target only by its `/dev/serial/by-id/` path; `ttyACM*` renumbers between
@@ -63,8 +76,9 @@ boards.
 
 ## Logging
 
-Both boards run at `level: INFO`, and in steady state emit nothing at all --
-measured 2 lines in 70 s on each, both the connect banner. Every condition the
+All boards run at `level: INFO`, and in steady state emit nothing at all --
+measured 2 lines in 70 s on each UPS board, both the connect banner. The PSU
+board logs only sets, refusals and connection changes. Every condition the
 components report is WARN or ERROR, so a real fault is the only thing that
 appears.
 
@@ -91,6 +105,9 @@ setting.
 | `common/qx-monitor.yaml` | Board-independent half of the Megatec monitor |
 | `apc-ups-stick.yaml` | Deployed: StickS3 board package plus a 240x135 layout |
 | `qx-ups-stick.yaml` | Deployed on the second StickS3, on the ABB PowerValue |
+| `common/psu-monitor.yaml` | Board-independent half of the PSU monitor |
+| `owon-psu-stick.yaml` | Deployed on the third StickS3, on the Owon SPE6103 |
+| `components/usb_uart/` | ESPHome's, vendored to add `suspend_usb()`; see its `VENDOR.md` |
 | `apc-ups.yaml` | CoreS3 build, kept working but not deployed |
 | `boards/m5stick-s3.yaml` | StickS3 package: PMIC, display, buttons; no VBUS path |
 | `boards/m5stack-cores3.yaml` | CoreS3 package: PMU rails, IO expander, USB host power |
@@ -160,8 +177,10 @@ does.
 Now the only deployed board. Verified on hardware: `10.22.10.65`, MAC
 `ac:27:6e:d2:5b:b4`,
 ESP32-S3-PICO-1 (LGA56), 8MB flash, no PSRAM enabled. `tools/sticks3_deploy.py`
-reports 8/8, including that the M5PM1 answered on I2C and the LCD rail came up
--- the failure that would otherwise be a dark panel and no error. With the UPS
+reports 6/6, including `PMIC OK` -- the M5PM1 answered on I2C and the LCD rail
+came up, the failure that would otherwise be a dark panel and no error. Its
+checks read live entities: at INFO the config banners never reach the log, and
+the old log-searching checks failed, or passed on an empty capture. With the UPS
 attached it reads 226 V in, 14 % load, 73 W against a 520 W nameplate, battery
 13.60 V at 100 %, and the interrupt endpoint delivers: 180 pushes of `0x16`
 PresentStatus and `0x0C` RemainingCapacity in 30 s, about 200 ms apart.

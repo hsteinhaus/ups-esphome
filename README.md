@@ -106,7 +106,7 @@ anything that tests the battery or switches the load.
 ## Component sources
 
 Display (`mipi_spi` model `M5CORE`), touch (`ft63x6`) and `usb_host` are
-upstream ESPHome. Only the AXP2101 PMU and AW9523B IO expander come from
+upstream ESPHome; `usb_uart` is too, vendored with one patch. Only the AXP2101 PMU and AW9523B IO expander come from
 [`m5stack/esphome-yaml`](https://github.com/m5stack/esphome-yaml), which is the
 actively maintained set — the older standalone `esphome-axp2101` forks are not.
 
@@ -261,6 +261,11 @@ One exception: `components/apc_ups/hid_pdc.{c,h}` are vendored unmodified from
 MIT licence (`components/apc_ups/hid_pdc.LICENSE`), which GPLv2 permits. They
 deliberately carry no SPDX marker, because they are kept byte-identical so
 upstream fixes can be applied by copying over them -- see `VENDOR.md`.
+
+`components/usb_uart/` is ESPHome's own component, vendored to add
+`suspend_usb()` (see its `VENDOR.md`). It keeps ESPHome's licence: GPLv3 for
+the C++ files, MIT for `__init__.py`. The firmware links ESPHome's GPLv3 runtime
+in any case.
 
 Credentials are referenced through `!secret` and have never been committed;
 see the section above before building.

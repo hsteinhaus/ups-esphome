@@ -1,7 +1,8 @@
 # Vendored: usb_uart
 
 ESPHome's own `usb_uart` from 2026.6.5 (`esphome/components/usb_uart/`),
-shadowing the built-in through `external_components`. Committed unmodified
+shadowing the built-in through `external_components`. ESPHome's licence
+applies: GPLv3 for the C++ files, MIT for `__init__.py`. Committed unmodified
 first, so `git log -p` on this directory shows the patch alone.
 
 ## The patch
