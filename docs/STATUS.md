@@ -270,7 +270,7 @@ Not HID: a CH340 (`1a86:7523`, no USB serial number) carrying SCPI at 115200
 8N1, `\n` out, `\r\n` back. Queries answer in ~55 ms.
 
 - `MEAS:ALL:INFO?` is the whole live state in one round trip:
-  `V,A,W,f1,f2,f3,mode`. Mode `1` is CV; `2` appeared once with a 0 A setpoint
+  `V,A,W,f1,f2,f3,mode`. Mode `0` is output off, `1` is CV; `2` appeared once with a 0 A setpoint
   and is taken for CC. The three ON/OFF fields are taken for OVP, OCP, OTP in
   that order -- **inferred, not observed**: open clamps trip none of them.
 - **Sets are never answered, and an out-of-range set is silently ignored**;
@@ -279,6 +279,9 @@ Not HID: a CH340 (`1a86:7523`, no USB serial number) carrying SCPI at 115200
   order matters: raise a limit before its setpoint, lower it after. A restore
   sent in the wrong order left the setpoint at 0 A.
 - Current resolves 10 mA (`CURR 0.001` reads back `0.000`).
+- After `OUTP ON` or `OUTP OFF` the PSU ignores the next query for up to a
+  second. A set therefore goes out once, and only its read-back is repeated:
+  resending `OUTP ON` restarted the wait and took 2.7 s to confirm, not 0.5 s.
 - `SYST:STAT?` -> `ERR`. SCPI does not lock the front panel, and the display
   follows remote sets.
 
@@ -290,8 +293,10 @@ switched off once; a boot without a client is not a loss.
 ## Still open
 
 1. **The PSU's protection flags and CC mode against a real load.** See above.
-2. **The PSU stick on hardware.** Built; not yet flashed or run against the
-   PSU, and OTA with `usb_uart` suspended is unproven.
+2. **The PSU stick's output-off on link loss.** Verified on hardware
+   2026-10-18 (10.22.10.83): identity, setpoints, limits, caps and the output
+   switch, and OTA with the PSU attached and polling (`USB quiesced`, erase
+   survived, polling back within 6 s). The link-loss trip is not yet seen.
 3. **A mains-loss transition on the StickS3.** The push path is proven on it
    and the firmware is the one validated on the CoreS3, but the event itself
    has not been seen on this board.

@@ -149,7 +149,9 @@ class OwonPSU : public Component, public uart::UARTDevice {
   // unknown / nothing pending; the output uses 0 and 1.
   float actual_[SETTING_COUNT];
   float target_[SETTING_COUNT];
-  uint8_t set_tries_[SETTING_COUNT]{};
+  // Sent and awaiting its read-back. Bulk USB does not lose bytes, so a set
+  // goes out once; only the query after it is repeated.
+  bool sent_[SETTING_COUNT]{};
 
   static constexpr size_t MAX_REPLY = 96;
   char rx_buf_[MAX_REPLY]{};

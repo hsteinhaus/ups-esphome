@@ -21,9 +21,6 @@ static const char *const TAG = "owon_psu";
 
 // Consecutive unanswered queries before the PSU counts as gone.
 static constexpr uint8_t MAX_MISSED_REPLIES = 3;
-// A set the PSU drops is resent once; one it reads back differently was
-// refused, and asking again gets the same answer.
-static constexpr uint8_t MAX_SET_TRIES = 2;
 // The PSU resolves 10 mV and 10 mA, and echoes three decimals.
 static constexpr float SETTING_TOLERANCE = 0.006f;
 
@@ -78,7 +75,7 @@ void OwonPSU::request_setting(Setting s, float value) {
   }
   ESP_LOGI(TAG, "%s -> %.3f requested", SETTING_NAME[s], value);
   this->target_[s] = value;
-  this->set_tries_[s] = 0;
+  this->sent_[s] = false;
 }
 
 void OwonPSU::suspend_usb() {
@@ -101,6 +98,14 @@ void OwonPSU::loop() {
   this->check_link_();
   if (this->suspended_)
     return;
+  // No bridge enumerated: there is nothing to ask, and a query would only be
+  // dropped by usb_uart and then counted as a PSU that stopped answering.
+  if (!this->usb_channel_->is_connected()) {
+    this->in_flight_ = CMD_NONE;
+    this->rx_len_ = 0;
+    this->set_connected_(false);
+    return;
+  }
 
   uint8_t c;
   while (this->available() && this->read_byte(&c)) {
@@ -140,7 +145,7 @@ void OwonPSU::loop() {
     // its setpoint and lowered after it, since the PSU refuses a setpoint above
     // its limit and a limit below its setpoint.
     auto pending = [this](Setting s) {
-      return !std::isnan(this->target_[s]) && this->set_tries_[s] < MAX_SET_TRIES;
+      return !std::isnan(this->target_[s]) && !this->sent_[s];
     };
     auto raising = [this](Setting s) { return std::isnan(this->actual_[s]) || this->target_[s] > this->actual_[s]; };
     static const Setting ORDER[] = {SETTING_VOLTAGE_LIMIT, SETTING_CURRENT_LIMIT, SETTING_VOLTAGE, SETTING_CURRENT};
@@ -158,6 +163,16 @@ void OwonPSU::loop() {
     for (Setting s : {SETTING_VOLTAGE_LIMIT, SETTING_CURRENT_LIMIT, SETTING_OUTPUT}) {
       if (pending(s)) {
         this->send_setting_(s);
+        return;
+      }
+    }
+
+    // A set whose read-back went unanswered is asked about again, never resent:
+    // after OUTP ON the PSU ignores queries for up to a second, and a second
+    // OUTP ON would only restart that.
+    for (uint8_t i = 0; i < SETTING_COUNT; i++) {
+      if (!std::isnan(this->target_[i]) && this->sent_[i]) {
+        this->send_query_(read_command(static_cast<Setting>(i)));
         return;
       }
     }
@@ -202,7 +217,7 @@ void OwonPSU::send_setting_(Setting s) {
   }
   ESP_LOGV(TAG, "-> '%.*s'", len - 1, buf);
   this->write_array(reinterpret_cast<const uint8_t *>(buf), len);
-  this->set_tries_[s]++;
+  this->sent_[s] = true;
   // The set itself is never answered. The read-back that follows is, and the
   // PSU handles commands in order, so it reports the outcome of the set.
   this->send_query_(read_command(s));
@@ -286,14 +301,15 @@ void OwonPSU::parse_info_(const char *reply) {
 
 void OwonPSU::on_read_back_(Setting s, float value) {
   this->actual_[s] = value;
-  if (!std::isnan(this->target_[s]) && this->set_tries_[s] > 0) {
+  // A read-back that disagrees means the set was refused; the PSU handles
+  // commands in order, so it cannot predate the set.
+  if (!std::isnan(this->target_[s]) && this->sent_[s]) {
     if (std::fabs(value - this->target_[s]) < SETTING_TOLERANCE) {
       ESP_LOGI(TAG, "%s now %.3f", SETTING_NAME[s], value);
-      this->target_[s] = NAN;
-    } else if (this->set_tries_[s] >= MAX_SET_TRIES) {
+    } else {
       ESP_LOGW(TAG, "%s %.3f refused by the PSU, still %.3f", SETTING_NAME[s], this->target_[s], value);
-      this->target_[s] = NAN;
     }
+    this->target_[s] = NAN;
   }
   if (s == SETTING_OUTPUT) {
     if (this->output_switch_ != nullptr)
@@ -332,7 +348,7 @@ void OwonPSU::check_link_() {
   // soon as the PSU answers again.
   ESP_LOGW(TAG, "API still lost; switching output off");
   this->target_[SETTING_OUTPUT] = 0.0f;
-  this->set_tries_[SETTING_OUTPUT] = 0;
+  this->sent_[SETTING_OUTPUT] = false;
 #endif
 }
 
@@ -352,8 +368,11 @@ void OwonPSU::set_connected_(bool connected) {
   ESP_LOGW(TAG, "PSU not answering");
   for (uint8_t i = 0; i < METRIC_COUNT; i++)
     this->publish_metric_(static_cast<Metric>(i), NAN);
-  for (uint8_t i = 0; i < SETTING_COUNT; i++)
+  // Whatever was sent may not have landed: send it again once it answers.
+  for (uint8_t i = 0; i < SETTING_COUNT; i++) {
     this->actual_[i] = NAN;
+    this->sent_[i] = false;
+  }
 }
 
 void OwonPSU::publish_metric_(Metric m, float value) {
