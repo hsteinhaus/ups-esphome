@@ -41,6 +41,8 @@ i2c:
 m5pm1:
   id: pmic
   i2c_id: bsp_bus
+  ok:
+    name: "PMIC OK"
 
 spi:
   - id: lcd_bus

@@ -259,12 +259,12 @@ def verify(config, host, wired_entity):
     # the PMIC is only checked on boards that have one, and then by its own
     # dump_config banner. The LCD rail is what fails invisibly here: a dark
     # panel, no error anywhere.
+    # Read live, not from the log: at INFO the config banners never reach it,
+    # and a check that only looks for an error passes on an empty capture.
     if uses_m5pm1(config):
-        results.append(("M5PM1 PMIC reported itself", "M5PM1 PMIC" in text))
-        results.append(("PMIC answered on I2C", "PMIC did not answer" not in text))
-        results.append(("LCD rail enabled", "could not enable the LCD rail" not in text))
+        results.append(("PMIC answered, LCD rail up", (probe(host, "/binary_sensor/pmic_ok") or {}).get("value") is True))
     results.append(("no component marked failed", "mark_failed" not in text and "] Failed" not in text))
-    results.append(("USB host started", "usb_host" in text.lower() or "USBClient" in text))
+    results.append(("device read over USB", (probe(host, f"/{wired_entity}") or {}).get("value") is not None))
     return results
 
 

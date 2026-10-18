@@ -34,17 +34,26 @@ bool M5PM1::configure_gpio_output_(uint8_t pin, bool level) {
          this->write_bit_(REG_GPIO_DRIVE, mask, false) && this->write_bit_(REG_GPIO_LEVEL, mask, level);
 }
 
+void M5PM1::publish_ok_(bool ok) {
+  if (this->ok_sensor_ != nullptr)
+    this->ok_sensor_->publish_state(ok);
+}
+
 void M5PM1::setup() {
   if (!this->write_byte(REG_I2C_CFG, I2C_CFG_NO_IDLE_SLEEP)) {
     ESP_LOGE(TAG, "PMIC did not answer");
+    this->publish_ok_(false);
     this->mark_failed();
     return;
   }
 
   if (this->lcd_power_ && !this->configure_gpio_output_(PIN_LCD_POWER, true)) {
     ESP_LOGE(TAG, "could not enable the LCD rail");
+    this->publish_ok_(false);
     this->mark_failed();
+    return;
   }
+  this->publish_ok_(true);
 }
 
 void M5PM1::dump_config() {

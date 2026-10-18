@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/core/component.h"
 
@@ -17,12 +18,16 @@ class M5PM1 : public Component, public i2c::I2CDevice {
   float get_setup_priority() const override { return setup_priority::BUS - 1.0f; }
 
   void set_lcd_power(bool enable) { this->lcd_power_ = enable; }
+  void set_ok_sensor(binary_sensor::BinarySensor *s) { this->ok_sensor_ = s; }
 
  protected:
   bool write_bit_(uint8_t reg, uint8_t mask, bool value);
   bool configure_gpio_output_(uint8_t pin, bool level);
 
+  void publish_ok_(bool ok);
+
   bool lcd_power_{true};
+  binary_sensor::BinarySensor *ok_sensor_{nullptr};
 };
 
 }  // namespace esphome::m5pm1
