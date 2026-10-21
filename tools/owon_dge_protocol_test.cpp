@@ -48,6 +48,7 @@ static void test_numbers() {
   check_near(parse_reply(SETTING_PHASE, "3.141593e+00"), 180.0f, "phase rad to deg");
   check(std::isinf(parse_reply(SETTING_LOAD, "9.9E+37")), "High-Z load reads as infinity");
   check_near(parse_reply(SETTING_LOAD, "5.000000e+01"), 50.0f, "50 ohm load");
+  check_near(parse_reply(SETTING_PULSE_WIDTH, "2.247191e-04"), 224.7191f, "pulse width s to us");
 }
 
 static void test_tokens() {
@@ -90,6 +91,9 @@ static void test_format() {
   check(format_set(SETTING_FREQUENCY, 12345.678f, buf, sizeof(buf)) &&
             std::fabs(strtof(buf + strlen("SOUR1:FREQ "), nullptr) - 12345.678f) < 0.01f,
         "frequency keeps its digits");
+  check(format_set(SETTING_PULSE_TRAIL, 6.734f, buf, sizeof(buf)) &&
+            std::fabs(strtof(buf + strlen("SOUR1:PULS:TRAN:TRA "), nullptr) - 6.734e-6f) < 1e-10f,
+        "pulse edge us to s");
   check(!format_set(SETTING_SHAPE, 9, buf, sizeof(buf)), "out-of-range token index refused");
   check(!format_query(SETTING_FREQUENCY, buf, 4), "short buffer refused");
 }

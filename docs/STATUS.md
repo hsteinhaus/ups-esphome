@@ -315,6 +315,36 @@ reads back every set. The output switch never acts on boot. When the API
 connection drops and stays down for `link_loss_timeout` (10 s), the output is
 switched off once; a boot without a client is not a loss.
 
+## Owon DGE1060 function generator
+
+Behind a bus-powered USB 2.0 hub on the PSU stick since 2026-10-21. `5345:1234`
+is Owon's "PC" USB mode: one interface, class 0, bulk OUT `0x01` / IN `0x81`,
+raw SCPI text (`\n` out, `\n`-ended replies). Not USBTMC.
+`*IDN?` -> `OWON,DGE1060,24500065,SCPI:99.0 FV:V1.0.4.4.0`. Single channel.
+
+- **Its endpoints claim 512-byte packets at full speed**, a high-speed value
+  IDF refuses (`EP MPS (512) exceeds supported limit (408)`). `owon_dge`
+  clamps them to 64 in the cached descriptor before claiming, as Linux does.
+- Command set: Owon's DGE2000/3000 manual, checked query by query on the unit.
+  The firmware says `PULS` and `SQU` where the manual says `PUL` and `SUQ`;
+  square duty, PWM, PM (never turns on), counter and `MODE:STAT?` do not
+  answer. An unknown query is never answered and sets a sticky `-102`.
+- AM, FM, FSK, sweep and burst are exclusive: enabling one turns the other off.
+  `AM:STAT ON` took effect a couple of queries late, so a set is re-queried
+  until it reads back, for up to the settings interval.
+- Sets never reply; every entity shows the read-back.
+- **The hub takes every host channel the S3 has.** The DWC controller has 8,
+  one per open pipe: hub control + interrupt, two control pipes, DGE bulk ×2,
+  CH340 bulk ×2 and its interrupt endpoint = 9. Whichever instrument claimed
+  second failed with `No more HCD channels available` (3/3 boots). The CH340's
+  interrupt endpoint is unused, so `usb_uart` now leaves it unclaimed: 8/8.
+  40 reboots since, both attached every time.
+- `usb_host`'s client accepts a new device only while idle, so one arriving
+  while it is busy with another is dropped. Behind a hub that is a burst, yet
+  it has not shown in those 40 boots, so nothing works around it.
+- `tools/owon_dge_check.py` passes against the unit: every number, waveform,
+  select, the exclusive modes, load and output.
+
 ## Still open
 
 1. **The PSU's protection flags and CC mode against a real load.** See above.

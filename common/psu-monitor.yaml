@@ -1,5 +1,6 @@
-# Everything in the Owon PSU monitor that does not depend on the board:
-# the USB host, the CH340 bridge, the owon_psu component and every entity it exposes.
+# Everything in the Owon PSU monitor that does not depend on the board: the
+# USB host and hub, the PSU's CH340 bridge, the DGE1060 signal generator, and
+# every entity the owon_psu and owon_dge components expose.
 #
 # Fonts and the display lambda stay with each board, since they are sized to a
 # particular panel.
@@ -38,16 +39,16 @@ ota:
     on_begin:
       # The IDF USB host ISR is flash-resident with no IRAM option, so a
       # transfer completing during the erase makes its driver assert.
-      - lambda: 'id(psu).suspend_usb();'
+      - lambda: 'id(psu).suspend_usb(); id(dge).suspend_usb();'
     on_error:
-      - lambda: 'id(psu).resume_usb();'
+      - lambda: 'id(psu).resume_usb(); id(dge).resume_usb();'
   - platform: web_server
     on_begin:
       # The IDF USB host ISR is flash-resident with no IRAM option, so a
       # transfer completing during the erase makes its driver assert.
-      - lambda: 'id(psu).suspend_usb();'
+      - lambda: 'id(psu).suspend_usb(); id(dge).suspend_usb();'
     on_error:
-      - lambda: 'id(psu).resume_usb();'
+      - lambda: 'id(psu).resume_usb(); id(dge).resume_usb();'
 
 web_server:
   port: 80
@@ -60,6 +61,18 @@ web_server:
     - id: group_caps
       name: "Caps"
       sorting_weight: 15
+    - id: group_signal
+      name: "Signal"
+      sorting_weight: 16
+    - id: group_modulation
+      name: "Modulation"
+      sorting_weight: 17
+    - id: group_sweep
+      name: "Sweep"
+      sorting_weight: 18
+    - id: group_burst
+      name: "Burst"
+      sorting_weight: 19
     - id: group_board
       name: "Board"
       sorting_weight: 20
@@ -72,10 +85,13 @@ external_components:
   - source:
       type: local
       path: components
-    # usb_uart is the ESPHome one plus suspend_usb(); see its VENDOR.md.
-    components: [owon_psu, usb_uart]
+    # usb_uart is the ESPHome one plus suspend_usb() and more; see its VENDOR.md.
+    components: [owon_psu, owon_dge, usb_uart]
 
 usb_host:
+  # A hub fans the port out to the PSU and the signal generator. That takes
+  # every one of the S3's 8 host channels; see usb_uart/VENDOR.md.
+  enable_hubs: true
   max_packet_size: 64
 
 usb_uart:
@@ -90,6 +106,9 @@ owon_psu:
   usb_uart_id: psu_uart
   voltage_cap: psu_voltage_cap
   current_cap: psu_current_cap
+
+owon_dge:
+  id: dge
 
 number:
   # Bounds on what Home Assistant may set, kept across reboots. Defaults are
@@ -143,6 +162,152 @@ number:
       entity_category: config
       web_server:
         sorting_group_id: group_psu
+  - platform: owon_dge
+    load:
+      name: "DGE Load"
+      entity_category: config
+      web_server:
+        sorting_group_id: group_signal
+    frequency:
+      name: "DGE Frequency"
+      web_server:
+        sorting_group_id: group_signal
+    amplitude:
+      name: "DGE Amplitude"
+      web_server:
+        sorting_group_id: group_signal
+    offset:
+      name: "DGE Offset"
+      web_server:
+        sorting_group_id: group_signal
+    phase:
+      name: "DGE Phase"
+      web_server:
+        sorting_group_id: group_signal
+    ramp_symmetry:
+      name: "DGE Ramp Symmetry"
+      web_server:
+        sorting_group_id: group_signal
+    pulse_duty:
+      name: "DGE Pulse Duty"
+      web_server:
+        sorting_group_id: group_signal
+    pulse_width:
+      name: "DGE Pulse Width"
+      web_server:
+        sorting_group_id: group_signal
+    pulse_lead:
+      name: "DGE Pulse Leading Edge"
+      web_server:
+        sorting_group_id: group_signal
+    pulse_trail:
+      name: "DGE Pulse Trailing Edge"
+      web_server:
+        sorting_group_id: group_signal
+    am_depth:
+      name: "DGE AM Depth"
+      web_server:
+        sorting_group_id: group_modulation
+    am_frequency:
+      name: "DGE AM Frequency"
+      web_server:
+        sorting_group_id: group_modulation
+    fm_deviation:
+      name: "DGE FM Deviation"
+      web_server:
+        sorting_group_id: group_modulation
+    fm_frequency:
+      name: "DGE FM Frequency"
+      web_server:
+        sorting_group_id: group_modulation
+    fsk_frequency:
+      name: "DGE FSK Hop Frequency"
+      web_server:
+        sorting_group_id: group_modulation
+    fsk_rate:
+      name: "DGE FSK Rate"
+      web_server:
+        sorting_group_id: group_modulation
+    sweep_time:
+      name: "DGE Sweep Time"
+      web_server:
+        sorting_group_id: group_sweep
+    sweep_start:
+      name: "DGE Sweep Start"
+      web_server:
+        sorting_group_id: group_sweep
+    sweep_stop:
+      name: "DGE Sweep Stop"
+      web_server:
+        sorting_group_id: group_sweep
+    burst_cycles:
+      name: "DGE Burst Cycles"
+      web_server:
+        sorting_group_id: group_burst
+    burst_period:
+      name: "DGE Burst Period"
+      web_server:
+        sorting_group_id: group_burst
+
+select:
+  - platform: owon_dge
+    shape:
+      name: "DGE Waveform"
+      web_server:
+        sorting_group_id: group_signal
+    modulation:
+      name: "DGE Modulation"
+      web_server:
+        sorting_group_id: group_modulation
+    am_source:
+      name: "DGE AM Source"
+      web_server:
+        sorting_group_id: group_modulation
+    am_shape:
+      name: "DGE AM Shape"
+      web_server:
+        sorting_group_id: group_modulation
+    fm_source:
+      name: "DGE FM Source"
+      web_server:
+        sorting_group_id: group_modulation
+    fm_shape:
+      name: "DGE FM Shape"
+      web_server:
+        sorting_group_id: group_modulation
+    fsk_source:
+      name: "DGE FSK Source"
+      web_server:
+        sorting_group_id: group_modulation
+    sweep_spacing:
+      name: "DGE Sweep Spacing"
+      web_server:
+        sorting_group_id: group_sweep
+    sweep_source:
+      name: "DGE Sweep Source"
+      web_server:
+        sorting_group_id: group_sweep
+    burst_mode:
+      name: "DGE Burst Mode"
+      web_server:
+        sorting_group_id: group_burst
+    burst_source:
+      name: "DGE Burst Source"
+      web_server:
+        sorting_group_id: group_burst
+    burst_gate_polarity:
+      name: "DGE Burst Gate Polarity"
+      web_server:
+        sorting_group_id: group_burst
+
+button:
+  # Reboots without touching either instrument; also how boot-time USB
+  # attach is tested.
+  - platform: restart
+    name: "Restart"
+    entity_category: config
+    web_server:
+      sorting_group_id: group_board
 
 switch:
   - platform: owon_psu
@@ -151,6 +316,24 @@ switch:
       id: psu_output
       web_server:
         sorting_group_id: group_psu
+  - platform: owon_dge
+    output:
+      name: "DGE Output"
+      web_server:
+        sorting_group_id: group_signal
+    load_high_z:
+      name: "DGE Load High-Z"
+      entity_category: config
+      web_server:
+        sorting_group_id: group_signal
+    sweep:
+      name: "DGE Sweep"
+      web_server:
+        sorting_group_id: group_sweep
+    burst:
+      name: "DGE Burst"
+      web_server:
+        sorting_group_id: group_burst
 
 text_sensor:
   - platform: wifi_info
@@ -182,6 +365,19 @@ text_sensor:
       id: psu_mode
       web_server:
         sorting_group_id: group_psu
+  - platform: owon_dge
+    model:
+      name: "DGE Model"
+      web_server:
+        sorting_group_id: group_signal
+    serial_number:
+      name: "DGE Serial Number"
+      web_server:
+        sorting_group_id: group_signal
+    firmware:
+      name: "DGE Firmware"
+      web_server:
+        sorting_group_id: group_signal
 
 sensor:
   - platform: owon_psu
@@ -223,3 +419,8 @@ binary_sensor:
       id: psu_connected
       web_server:
         sorting_group_id: group_psu
+  - platform: owon_dge
+    connected:
+      name: "DGE Connected"
+      web_server:
+        sorting_group_id: group_signal

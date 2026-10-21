@@ -67,7 +67,8 @@ struct SettingDef {
   Kind kind;
   const char *const *tokens;
   uint8_t n_tokens;
-  // Wire value per entity unit: phase is set and read in radians but shown in degrees.
+  // Wire value per entity unit: phase is set and read in radians but shown in
+  // degrees, pulse timing in seconds but shown in microseconds.
   float wire_per_unit;
 };
 

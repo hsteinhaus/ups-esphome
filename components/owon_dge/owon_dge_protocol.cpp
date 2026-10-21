@@ -21,6 +21,9 @@ static const char *const POLARITIES[] = {"POS", "NEG"};
 #define NUM(scpi) {scpi, Kind::NUMBER, nullptr, 0, 1.0f}
 #define BOOL(scpi) {scpi, Kind::BOOL, nullptr, 0, 1.0f}
 #define TOK(scpi, list) {scpi, Kind::TOKEN, list, sizeof(list) / sizeof(list[0]), 1.0f}
+// Pulse timing travels in seconds but is shown in microseconds: ESPHome shows
+// a number to its step, and nanosecond steps on seconds would read as 0.
+#define MICROS(scpi) {scpi, Kind::NUMBER, nullptr, 0, 1e-6f}
 
 static const SettingDef DEFS[SETTING_COUNT] = {
     BOOL("OUTP1"),
@@ -32,9 +35,9 @@ static const SettingDef DEFS[SETTING_COUNT] = {
     {"SOUR1:PHAS", Kind::NUMBER, nullptr, 0, static_cast<float>(M_PI / 180.0)},
     NUM("SOUR1:FUNC:RAMP:SYMM"),
     NUM("SOUR1:PULS:DCYC"),
-    NUM("SOUR1:PULS:WIDT"),
-    NUM("SOUR1:PULS:TRAN"),
-    NUM("SOUR1:PULS:TRAN:TRA"),
+    MICROS("SOUR1:PULS:WIDT"),
+    MICROS("SOUR1:PULS:TRAN"),
+    MICROS("SOUR1:PULS:TRAN:TRA"),
     BOOL("SOUR1:AM:STAT"),
     NUM("SOUR1:AM:DEPT"),
     TOK("SOUR1:AM:SOUR", MOD_SOURCES),
@@ -66,6 +69,7 @@ static const SettingDef DEFS[SETTING_COUNT] = {
 #undef NUM
 #undef BOOL
 #undef TOK
+#undef MICROS
 
 // The firmware reports High-Z as 9.9E+37, SCPI's conventional infinity.
 static constexpr float SCPI_INFINITY = 9.9e37f;

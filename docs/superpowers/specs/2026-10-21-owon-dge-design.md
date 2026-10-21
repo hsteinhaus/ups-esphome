@@ -126,6 +126,19 @@ redundant with the per-type states.)
 
 ## Related fixes in the same effort
 
+> **Outcome (2026-10-21):** item 1's real cause was not the event race but
+> host-channel exhaustion: the S3 has 8 DWC host channels, one per open pipe.
+> Hub (control + interrupt) 2, PSU and DGE control pipes 2, DGE bulk 2, CH340
+> bulk 2 + its unused interrupt endpoint 1 = 9. Whichever instrument claimed
+> second failed with `No more HCD channels available` (3/3 boots once the DGE
+> client existed). Fix: the CH34x driver describes the bulk interface as one
+> endpoint short so IDF leaves the unused interrupt endpoint unclaimed (8/8).
+> A rescan for dropped NEW_DEV events was built and then removed: with the
+> channel fix, 20/20 boots attached both instruments without it.
+> Item 2: a quiet window of one reply timeout was not enough (8 misaligned in
+> 60 s at a 40 ms timeout); the window and the resync *IDN?'s own timeout are
+> now 1.5 s, above the PSU's worst observed delay: 0 in 90 s.
+
 1. **USB boot race (needs reproduction first).** `usb_host`'s client accepts a
    new-device address only while idle; while it is opening/closing another
    device, the NEW_DEV events for the rest are dropped and never revisited.
