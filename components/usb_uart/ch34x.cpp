@@ -165,6 +165,31 @@ std::vector<CdcEps> USBUartTypeCH34X::parse_descriptors(usb_device_handle_t dev_
   // ch34x doesn't use the interrupt endpoint, and we don't have endpoints to spare
   for (auto &cdc_dev : result) {
     cdc_dev.interrupt_interface_number = 0xFF;
+    cdc_dev.notify_ep = nullptr;
+  }
+  // It shares the bulk interface, though, so claiming that would still take a
+  // host channel for it: the S3 has 8, and a hub with a second device behind
+  // it needs all 8 without this one. IDF claims an interface's endpoints by
+  // index, and the CH340 lists the interrupt one last, so describing the
+  // interface as having one endpoint fewer leaves it out. IDF keeps this copy
+  // of the descriptor in RAM.
+  const usb_config_desc_t *cfg;
+  if (usb_host_get_active_config_descriptor(dev_hdl, &cfg) != ESP_OK)
+    return result;
+  int offset = 0;
+  const auto *d = reinterpret_cast<const usb_standard_desc_t *>(cfg);
+  while ((d = usb_parse_next_descriptor_of_type(d, cfg->wTotalLength, USB_B_DESCRIPTOR_TYPE_INTERFACE, &offset))) {
+    auto *intf = const_cast<usb_intf_desc_t *>(reinterpret_cast<const usb_intf_desc_t *>(d));
+    if (intf->bNumEndpoints == 0)
+      continue;
+    int ep_offset = offset;
+    const usb_ep_desc_t *last =
+        usb_parse_endpoint_descriptor_by_index(intf, intf->bNumEndpoints - 1, cfg->wTotalLength, &ep_offset);
+    if (last != nullptr && USB_EP_DESC_GET_XFERTYPE(last) == USB_TRANSFER_TYPE_INTR) {
+      ESP_LOGD(TAG, "leaving interrupt EP %02X of interface %u unclaimed", last->bEndpointAddress,
+               intf->bInterfaceNumber);
+      intf->bNumEndpoints--;
+    }
   }
   return result;
 }
