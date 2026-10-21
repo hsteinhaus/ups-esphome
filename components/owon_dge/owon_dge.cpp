@@ -115,19 +115,26 @@ void OwonDGE::on_connected() {
   this->status_clear_error();
   this->reset_state_();
   this->in_pending_ = false;
+  this->in_failed_ = false;
   this->rx_ready_ = false;
   this->claimed_ = true;
   this->start_input_();
 }
 
-void OwonDGE::disconnect() {
+void OwonDGE::on_disconnected() {
   // Also called for every device found not to be ours.
   if (this->claimed_) {
+    for (uint8_t ep : {EP_IN, EP_OUT}) {
+      usb_host_endpoint_halt(this->device_handle_, ep);
+      usb_host_endpoint_flush(this->device_handle_, ep);
+    }
+    // Held, the interface keeps the device from closing, and its channels taken.
+    usb_host_interface_release(this->handle_, this->device_handle_, 0);
     this->claimed_ = false;
     this->set_connected_(false);
     this->reset_state_();
   }
-  USBClient::disconnect();
+  USBClient::on_disconnected();
 }
 
 void OwonDGE::suspend_usb() {
@@ -149,14 +156,17 @@ void OwonDGE::resume_usb() {
       usb_host_endpoint_clear(this->device_handle_, ep);
   }
   this->in_pending_ = false;
+  this->in_failed_ = false;
   this->rx_ready_ = false;
   this->line_len_ = 0;
   this->resync_ = true;
+  // Anything that lands around the halt counts as the line still busy.
+  this->last_rx_ = millis();
   this->suspended_ = false;
 }
 
 void OwonDGE::start_input_() {
-  if (!this->claimed_ || this->suspended_ || this->rx_ready_ || this->in_pending_.exchange(true))
+  if (!this->claimed_ || this->suspended_ || this->rx_ready_ || this->in_failed_ || this->in_pending_.exchange(true))
     return;
   const bool ok = this->transfer_in(
       EP_IN,
@@ -167,6 +177,8 @@ void OwonDGE::start_input_() {
           memcpy(this->rx_chunk_, st.data, n);
           this->rx_chunk_len_.store(n);
           this->rx_ready_.store(true);
+        } else if (!st.success && !this->suspended_) {
+          this->in_failed_.store(true);
         }
         this->in_pending_.store(false);
       },
@@ -201,12 +213,14 @@ void OwonDGE::loop() {
   }
   this->start_input_();
 
-  const uint32_t now = millis();
+  uint32_t now = millis();
   if (this->in_flight_ != QUERY_NONE) {
     const uint32_t timeout = this->resync_ ? RESYNC_QUIET_MS : this->reply_timeout_;
     if (now - this->command_started_ < timeout)
       return;
     this->on_timeout_();
+    // on_timeout_ restarts the quiet window at its own millis().
+    now = millis();
   }
 
   // Replies carry nothing that names their query, so a late one would answer
@@ -274,6 +288,16 @@ void OwonDGE::send_line_(const char *line) {
 }
 
 void OwonDGE::send_query_(uint8_t query) {
+  // A failed IN is retried once per query, not per loop: a pipe that keeps
+  // failing then costs a reply timeout each round, not a busy loop.
+  if (this->in_failed_.exchange(false)) {
+    ESP_LOGW(TAG, "IN transfer failed, clearing the pipe");
+    // IDF clears only a halted pipe.
+    usb_host_endpoint_halt(this->device_handle_, EP_IN);
+    usb_host_endpoint_flush(this->device_handle_, EP_IN);
+    usb_host_endpoint_clear(this->device_handle_, EP_IN);
+    this->start_input_();
+  }
   char buf[48];
   if (query == QUERY_IDENTITY) {
     strcpy(buf, "*IDN?");
@@ -375,9 +399,10 @@ void OwonDGE::request_setting(Setting s, float value) {
 
 void OwonDGE::request_modulation(Modulation m) {
   if (m == MODULATION_OFF) {
-    // Only the type that is on: turning one off never turns another on.
+    // Only the type that is on, or about to be: turning one off never turns
+    // another on.
     for (Setting s : MODULATION_STATE) {
-      if (this->actual_[s] > 0.5f)
+      if (this->actual_[s] > 0.5f || this->target_[s] > 0.5f)
         this->request_setting(s, 0.0f);
     }
     if (!this->connected_)

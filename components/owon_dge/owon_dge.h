@@ -101,7 +101,7 @@ class OwonDGE : public usb_host::USBClient {
 
  protected:
   void on_connected() override;
-  void disconnect() override;
+  void on_disconnected() override;
   void start_input_();
   void send_line_(const char *line);
   void send_query_(uint8_t query);
@@ -135,6 +135,9 @@ class OwonDGE : public usb_host::USBClient {
   std::atomic<uint16_t> rx_chunk_len_{0};
   std::atomic<bool> rx_ready_{false};
   std::atomic<bool> in_pending_{false};
+  // An IN transfer failed: its pipe may be halted, and is cleared from the
+  // main loop before the next query re-arms it.
+  std::atomic<bool> in_failed_{false};
   std::atomic<bool> suspended_{false};
   char line_[MAX_LINE]{};
   size_t line_len_{0};

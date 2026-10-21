@@ -155,7 +155,7 @@ void OwonPSU::loop() {
     this->on_reply_(answered, this->rx_buf_);
   }
 
-  const uint32_t now = millis();
+  uint32_t now = millis();
   if (this->in_flight_ != CMD_NONE) {
     const uint32_t timeout = this->resync_ ? RESYNC_QUIET_MS : this->reply_timeout_;
     if (now - this->command_started_ < timeout)
@@ -164,6 +164,8 @@ void OwonPSU::loop() {
     this->in_flight_ = CMD_NONE;
     this->rx_len_ = 0;
     this->on_timeout_(missed);
+    // on_timeout_ restarts the quiet window at its own millis().
+    now = millis();
   }
 
   // Replies carry nothing that names their query, so one that arrives after
