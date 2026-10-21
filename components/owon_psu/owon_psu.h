@@ -161,6 +161,8 @@ class OwonPSU : public Component, public uart::UARTDevice {
   // query they answer.
   Command in_flight_{CMD_NONE};
   uint32_t command_started_{0};
+  // Last byte received, or the last timeout: the start of the line's silence.
+  uint32_t last_rx_{0};
   uint8_t missed_replies_{0};
   bool connected_{false};
   // Set at start, after any timeout and across a USB gap: see loop().

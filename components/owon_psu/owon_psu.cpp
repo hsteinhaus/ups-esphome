@@ -21,6 +21,11 @@ static const char *const TAG = "owon_psu";
 
 // Consecutive unanswered queries before the PSU counts as gone.
 static constexpr uint8_t MAX_MISSED_REPLIES = 3;
+// Longer than the longest a reply has been seen to take (about 1 s, after
+// OUTP ON/OFF). After a miss the line must be silent this long before the
+// resync *IDN? goes out, so no earlier reply is still on its way; the *IDN?
+// is then the only query outstanding and is given as long to answer.
+static constexpr uint32_t RESYNC_QUIET_MS = 1500;
 // The PSU resolves 10 mV and 10 mA, and echoes three decimals.
 static constexpr float SETTING_TOLERANCE = 0.006f;
 
@@ -122,6 +127,7 @@ void OwonPSU::loop() {
 
   uint8_t c;
   while (this->available() && this->read_byte(&c)) {
+    this->last_rx_ = millis();
     if (c == '\r')
       continue;
     if (c != '\n') {
@@ -151,7 +157,8 @@ void OwonPSU::loop() {
 
   const uint32_t now = millis();
   if (this->in_flight_ != CMD_NONE) {
-    if (now - this->command_started_ < this->reply_timeout_)
+    const uint32_t timeout = this->resync_ ? RESYNC_QUIET_MS : this->reply_timeout_;
+    if (now - this->command_started_ < timeout)
       return;
     const Command missed = this->in_flight_;
     this->in_flight_ = CMD_NONE;
@@ -163,8 +170,11 @@ void OwonPSU::loop() {
   // its timeout would answer the next query instead, and every one after it.
   // Until the *IDN? reply comes back, nothing else is asked and nothing else
   // is believed; the PSU answers in order, so pairing holds from there.
+  // The *IDN? waits for a quiet line: sent while a late reply is still on its
+  // way, it would be one of two outstanding, and the second would misalign.
   if (this->resync_) {
-    this->send_query_(CMD_IDENTITY);
+    if (now - this->last_rx_ >= RESYNC_QUIET_MS)
+      this->send_query_(CMD_IDENTITY);
     return;
   }
 
@@ -280,6 +290,8 @@ void OwonPSU::on_reply_(Command answered, const char *reply) {
 void OwonPSU::on_timeout_(Command missed) {
   ESP_LOGD(TAG, "%s unanswered", COMMAND_TEXT[missed]);
   this->resync_ = true;
+  // The quiet window before the next *IDN? starts now, not at the last byte.
+  this->last_rx_ = millis();
   if (++this->missed_replies_ >= MAX_MISSED_REPLIES)
     this->set_connected_(false);
 }
