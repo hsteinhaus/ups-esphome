@@ -16,7 +16,9 @@ no HID device at all: a CH340 bridge carries SCPI, so `owon_psu` sits on
 ESPHome's `usb_uart` -- vendored, to add the `suspend_usb()` OTA needs -- and
 reads, sets and switches the output. An **Owon DGE1060 function generator**
 (`5345:1234`) shares that stick through a USB hub: raw SCPI over two bulk
-endpoints, driven by `owon_dge` on `usb_host` directly.
+endpoints, driven by `owon_dge` on `usb_host` directly. For automated HIL use
+of both, see [docs/HIL-AGENT.md](docs/HIL-AGENT.md); the stick serves it at
+`/agent.md` (`agent_doc`).
 
 What the UPSes do share is the transport work underneath: endpoint discovery from the
 configuration descriptor, the interface claim ESPHome's `USBClient` omits, and a

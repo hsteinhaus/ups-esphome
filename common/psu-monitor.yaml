@@ -86,7 +86,11 @@ external_components:
       type: local
       path: components
     # usb_uart is the ESPHome one plus suspend_usb() and more; see its VENDOR.md.
-    components: [owon_psu, owon_dge, usb_uart]
+    components: [owon_psu, owon_dge, usb_uart, agent_doc]
+
+# The HIL guide for agents, served by the firmware it describes.
+agent_doc:
+  file: docs/HIL-AGENT.md
 
 usb_host:
   # A hub fans the port out to the PSU and the signal generator. That takes
@@ -336,6 +340,15 @@ switch:
         sorting_group_id: group_burst
 
 text_sensor:
+  # Points at the agent_doc guide; the local web UI has no way to add a link.
+  - platform: template
+    name: "Agent Guide"
+    icon: "mdi:robot-outline"
+    entity_category: diagnostic
+    lambda: 'return {"/agent.md"};'
+    update_interval: 1h
+    web_server:
+      sorting_group_id: group_board
   - platform: wifi_info
     ip_address:
       id: wifi_ip
